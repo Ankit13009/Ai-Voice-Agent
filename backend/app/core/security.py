@@ -68,13 +68,13 @@ def dummy_password_verify() -> None:
 def create_token(
     *,
     user_id: str,
-    clinic_id: str | None,
+    business_id: str | None,
     role: str,
     token_type: TokenType = "access",
 ) -> str:
     """Mint a signed token.
 
-    `clinic_id` is baked into the token, and every tenant-scoped query derives
+    `business_id` is baked into the token, and every tenant-scoped query derives
     its filter from this claim rather than from a client-supplied parameter.
     That is what makes cross-tenant reads impossible rather than merely
     inconvenient.
@@ -88,7 +88,7 @@ def create_token(
     )
     payload: dict[str, Any] = {
         "sub": user_id,
-        "clinic_id": clinic_id,
+        "business_id": business_id,
         "role": role,
         "type": token_type,
         "iat": int(now.timestamp()),
@@ -127,7 +127,7 @@ def decode_token(token: str, *, expected_type: TokenType = "access") -> dict[str
 
 
 # --------------------------------------------------------------------------- #
-# Encryption at rest (Google OAuth refresh tokens, per-clinic API keys)
+# Encryption at rest (Google OAuth refresh tokens, per-business API keys)
 # --------------------------------------------------------------------------- #
 def _fernet() -> Fernet:
     settings = get_settings()

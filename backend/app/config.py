@@ -99,7 +99,7 @@ class Settings(BaseSettings):
         """
         url = self.database_url.strip()
         if not url:
-            return "sqlite+aiosqlite:///./clinic_receptionist.db"
+            return "sqlite+aiosqlite:///./receptionist.db"
         if url.startswith("postgres://"):
             url = "postgresql://" + url[len("postgres://") :]
         if url.startswith("postgresql://"):

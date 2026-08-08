@@ -56,7 +56,7 @@ export function Badge({
  * Domain status -> visual tone, mapped in one place.
  *
  * Centralising this is what makes "cancelled" the same red on the appointments
- * table, the call log, and the patient detail page. A component that needs a
+ * table, the call log, and the customer detail page. A component that needs a
  * status chip uses these rather than choosing a tone itself.
  */
 

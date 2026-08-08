@@ -48,7 +48,7 @@ export default function LoginPage() {
     <main className="min-h-screen flex items-center justify-center p-4 bg-canvas">
       <div className="w-full max-w-sm">
         <div className="text-center mb-6">
-          <h1 className="text-xl font-semibold text-ink">Clinic Receptionist</h1>
+          <h1 className="text-xl font-semibold text-ink">Business Receptionist</h1>
           <p className="text-sm text-ink-muted mt-1">
             Sign in to manage calls and appointments.
           </p>
@@ -64,7 +64,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 autoComplete="email"
-                placeholder="you@clinic.in"
+                placeholder="you@business.in"
                 required
                 autoFocus
               />
@@ -94,7 +94,7 @@ export default function LoginPage() {
         </Card>
 
         <p className="text-center text-xs text-ink-subtle mt-4">
-          Trouble signing in? Contact your clinic administrator.
+          Trouble signing in? Contact your business administrator.
         </p>
       </div>
     </main>

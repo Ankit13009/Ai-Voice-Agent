@@ -4,10 +4,10 @@ import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { ApiError } from "@/lib/api/client";
-import { clinicApi, integrationApi } from "@/lib/api/endpoints";
+import { businessApi, integrationApi } from "@/lib/api/endpoints";
 import { useApiQuery, useMutation } from "@/lib/useApi";
 import { formatTime, formatWorkingDays } from "@/lib/format";
-import type { Clinic, Language } from "@/types/api";
+import type { Business, Language } from "@/types/api";
 import {
   Alert,
   Button,
@@ -27,7 +27,7 @@ import {
   useToast,
   type Column,
 } from "@/components/ui";
-import type { Doctor } from "@/types/api";
+import type { StaffMember } from "@/types/api";
 
 const LANGUAGE_OPTIONS = [
   { value: "hi-en", label: "Hindi + English (recommended)" },
@@ -48,7 +48,7 @@ const WEEKDAYS = [
 export default function SettingsPage() {
   const toast = useToast();
   const searchParams = useSearchParams();
-  const clinic = useApiQuery((signal) => clinicApi.me(signal), []);
+  const business = useApiQuery((signal) => businessApi.me(signal), []);
 
   // The Google OAuth callback redirects back here with a status flag, since a
   // browser redirect cannot carry an Authorization header to report its result.
@@ -57,7 +57,7 @@ export default function SettingsPage() {
     if (!googleResult) return;
     if (googleResult === "connected") {
       toast.showSuccess("Google Calendar connected.");
-      clinic.refetch();
+      business.refetch();
     } else if (googleResult === "denied") {
       toast.show("Google Calendar access was declined.", "error");
     } else if (googleResult) {
@@ -67,11 +67,11 @@ export default function SettingsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  if (clinic.loading) return <PageLoading />;
-  if (clinic.error || !clinic.data) {
+  if (business.loading) return <PageLoading />;
+  if (business.error || !business.data) {
     return (
       <Alert tone="danger" title="Could not load settings">
-        {clinic.error?.message ?? "Please refresh the page."}
+        {business.error?.message ?? "Please refresh the page."}
       </Alert>
     );
   }
@@ -80,30 +80,30 @@ export default function SettingsPage() {
     <>
       <PageHeader
         title="Settings"
-        description={`${clinic.data.name} · patients dial ${clinic.data.phone_number}`}
+        description={`${business.data.name} · customers dial ${business.data.phone_number}`}
       />
 
       <div className="flex flex-col gap-4">
-        <IntegrationsCard clinic={clinic.data} onChange={clinic.refetch} />
-        <AgentCard clinic={clinic.data} onSaved={clinic.refetch} />
-        <ScheduleCard clinic={clinic.data} onSaved={clinic.refetch} />
-        <RemindersCard clinic={clinic.data} onSaved={clinic.refetch} />
-        <DoctorsCard clinic={clinic.data} onChange={clinic.refetch} />
+        <IntegrationsCard business={business.data} onChange={business.refetch} />
+        <AgentCard business={business.data} onSaved={business.refetch} />
+        <ScheduleCard business={business.data} onSaved={business.refetch} />
+        <RemindersCard business={business.data} onSaved={business.refetch} />
+        <DoctorsCard business={business.data} onChange={business.refetch} />
       </div>
     </>
   );
 }
 
 function IntegrationsCard({
-  clinic,
+  business,
   onChange,
 }: {
-  clinic: Clinic;
+  business: Business;
   onChange: () => void;
 }) {
   const toast = useToast();
   const [disconnecting, setDisconnecting] = useState(false);
-  const integrations = clinic.integrations;
+  const integrations = business.integrations;
 
   const connect = useMutation(async () => {
     try {
@@ -166,7 +166,7 @@ function IntegrationsCard({
           connected={Boolean(integrations?.vapi_assistant_configured)}
           detail={
             integrations?.vapi_assistant_configured
-              ? "Answering calls on the clinic number."
+              ? "Answering calls on the business number."
               : "No assistant attached. Inbound calls will not be answered."
           }
         />
@@ -233,19 +233,19 @@ function IntegrationRow({
   );
 }
 
-function AgentCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void }) {
+function AgentCard({ business, onSaved }: { business: Business; onSaved: () => void }) {
   const toast = useToast();
-  const [agentName, setAgentName] = useState(clinic.agent_name);
-  const [language, setLanguage] = useState<Language>(clinic.primary_language);
-  const [greetingHi, setGreetingHi] = useState(clinic.greeting_hi);
-  const [greetingEn, setGreetingEn] = useState(clinic.greeting_en);
-  const [notes, setNotes] = useState(clinic.agent_notes);
+  const [agentName, setAgentName] = useState(business.agent_name);
+  const [language, setLanguage] = useState<Language>(business.primary_language);
+  const [greetingHi, setGreetingHi] = useState(business.greeting_hi);
+  const [greetingEn, setGreetingEn] = useState(business.greeting_en);
+  const [notes, setNotes] = useState(business.agent_notes);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
   const save = useMutation(async () => {
     setFieldErrors({});
     try {
-      const { message } = await clinicApi.update({
+      const { message } = await businessApi.update({
         agent_name: agentName.trim(),
         primary_language: language,
         greeting_hi: greetingHi,
@@ -327,12 +327,12 @@ function AgentCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void })
   );
 }
 
-function ScheduleCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void }) {
+function ScheduleCard({ business, onSaved }: { business: Business; onSaved: () => void }) {
   const toast = useToast();
-  const [opensAt, setOpensAt] = useState(clinic.opens_at.slice(0, 5));
-  const [closesAt, setClosesAt] = useState(clinic.closes_at.slice(0, 5));
-  const [days, setDays] = useState<number[]>(clinic.working_days);
-  const [slot, setSlot] = useState(String(clinic.slot_duration_minutes));
+  const [opensAt, setOpensAt] = useState(business.opens_at.slice(0, 5));
+  const [closesAt, setClosesAt] = useState(business.closes_at.slice(0, 5));
+  const [days, setDays] = useState<number[]>(business.working_days);
+  const [slot, setSlot] = useState(String(business.slot_duration_minutes));
 
   const toggleDay = (day: number) =>
     setDays((current) =>
@@ -343,7 +343,7 @@ function ScheduleCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void
 
   const save = useMutation(async () => {
     try {
-      const { message } = await clinicApi.update({
+      const { message } = await businessApi.update({
         opens_at: `${opensAt}:00`,
         closes_at: `${closesAt}:00`,
         working_days: days,
@@ -360,7 +360,7 @@ function ScheduleCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void
     <Card>
       <CardHeader
         title="Opening hours"
-        description={`Currently ${formatWorkingDays(clinic.working_days)}, ${formatTime(clinic.opens_at)} to ${formatTime(clinic.closes_at)}.`}
+        description={`Currently ${formatWorkingDays(business.working_days)}, ${formatTime(business.opens_at)} to ${formatTime(business.closes_at)}.`}
       />
       <CardBody className="flex flex-col gap-4">
         <div className="grid gap-4 sm:grid-cols-3">
@@ -430,15 +430,15 @@ function ScheduleCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void
   );
 }
 
-function RemindersCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => void }) {
+function RemindersCard({ business, onSaved }: { business: Business; onSaved: () => void }) {
   const toast = useToast();
-  const [enabled, setEnabled] = useState(clinic.whatsapp_enabled);
-  const [reminder24, setReminder24] = useState(clinic.reminder_24h_enabled);
-  const [reminder2, setReminder2] = useState(clinic.reminder_2h_enabled);
+  const [enabled, setEnabled] = useState(business.whatsapp_enabled);
+  const [reminder24, setReminder24] = useState(business.reminder_24h_enabled);
+  const [reminder2, setReminder2] = useState(business.reminder_2h_enabled);
 
   const save = useMutation(async () => {
     try {
-      const { message } = await clinicApi.update({
+      const { message } = await businessApi.update({
         whatsapp_enabled: enabled,
         reminder_24h_enabled: reminder24,
         reminder_2h_enabled: reminder2,
@@ -487,7 +487,7 @@ function RemindersCard({ clinic, onSaved }: { clinic: Clinic; onSaved: () => voi
   );
 }
 
-function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => void }) {
+function DoctorsCard({ business, onChange }: { business: Business; onChange: () => void }) {
   const toast = useToast();
   const [name, setName] = useState("");
   const [specialization, setSpecialization] = useState("");
@@ -496,13 +496,13 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
 
   const add = useMutation(async () => {
     try {
-      const { message } = await clinicApi.createDoctor({
+      const { message } = await businessApi.createDoctor({
         name: name.trim(),
         specialization: specialization.trim(),
         google_calendar_id: calendarId.trim(),
         consultation_duration_minutes: Number(duration),
       });
-      toast.showSuccess(message, "Doctor added.");
+      toast.showSuccess(message, "StaffMember added.");
       setName("");
       setSpecialization("");
       setCalendarId("");
@@ -512,25 +512,25 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
     }
   });
 
-  const deactivate = useMutation(async (doctor: Doctor) => {
+  const deactivate = useMutation(async (staffMember: StaffMember) => {
     try {
-      const { message } = await clinicApi.deactivateDoctor(doctor.id);
-      toast.showSuccess(message, "Doctor deactivated.");
+      const { message } = await businessApi.deactivateDoctor(staffMember.id);
+      toast.showSuccess(message, "StaffMember deactivated.");
       onChange();
     } catch (error) {
       toast.showApiError(error);
     }
   });
 
-  const columns: Array<Column<Doctor>> = [
+  const columns: Array<Column<StaffMember>> = [
     {
       key: "name",
-      header: "Doctor",
-      render: (doctor) => (
+      header: "StaffMember",
+      render: (staffMember) => (
         <div>
-          <p className="text-sm text-ink">{doctor.name}</p>
-          {doctor.specialization && (
-            <p className="text-xs text-ink-subtle mt-0.5">{doctor.specialization}</p>
+          <p className="text-sm text-ink">{staffMember.name}</p>
+          {staffMember.specialization && (
+            <p className="text-xs text-ink-subtle mt-0.5">{staffMember.specialization}</p>
           )}
         </div>
       ),
@@ -540,9 +540,9 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
       header: "Slot",
       align: "right",
       hideOnMobile: true,
-      render: (doctor) => (
+      render: (staffMember) => (
         <span className="text-sm text-ink-muted tnum">
-          {doctor.consultation_duration_minutes} min
+          {staffMember.consultation_duration_minutes} min
         </span>
       ),
     },
@@ -550,12 +550,12 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
       key: "actions",
       header: "",
       align: "right",
-      render: (doctor) =>
-        doctor.is_active ? (
+      render: (staffMember) =>
+        staffMember.is_active ? (
           <Button
             size="sm"
             variant="ghost"
-            onClick={() => deactivate.run(doctor)}
+            onClick={() => deactivate.run(staffMember)}
             disabled={deactivate.pending}
           >
             Deactivate
@@ -569,17 +569,17 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
   return (
     <Card>
       <CardHeader
-        title="Doctors"
-        description="Give each doctor their own Google Calendar to book them separately."
+        title="StaffMembers"
+        description="Give each staffMember their own Google Calendar to book them separately."
       />
 
       <Table
         columns={columns}
-        rows={clinic.doctors}
-        rowKey={(doctor) => doctor.id}
+        rows={business.staff_members}
+        rowKey={(staffMember) => staffMember.id}
         empty={
           <p className="text-center text-sm text-ink-subtle">
-            No doctors yet. The clinic uses one shared schedule until you add some.
+            No staff_members yet. The business uses one shared schedule until you add some.
           </p>
         }
       />
@@ -601,12 +601,12 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
         </Field>
         <Field
           label="Google Calendar ID"
-          hint="Leave empty to use the clinic's main calendar."
+          hint="Leave empty to use the business's main calendar."
         >
           <Input
             value={calendarId}
             onChange={(event) => setCalendarId(event.target.value)}
-            placeholder="doctor@clinic.in"
+            placeholder="staffMember@business.in"
           />
         </Field>
         <Field label="Consultation length" hint="Minutes.">
@@ -626,7 +626,7 @@ function DoctorsCard({ clinic, onChange }: { clinic: Clinic; onChange: () => voi
           loading={add.pending}
           disabled={!name.trim()}
         >
-          Add doctor
+          Add staffMember
         </Button>
       </CardFooter>
     </Card>

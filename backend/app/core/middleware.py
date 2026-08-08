@@ -25,7 +25,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     """Attach a request id to every request, echo it on the response, and log
     one structured line per request.
 
-    The id is what a clinic quotes when reporting a problem; it ties the user's
+    The id is what a business quotes when reporting a problem; it ties the user's
     error toast to the exact server log line.
     """
 
@@ -89,7 +89,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Deliberately in-process: it is a brute-force speed bump for a single-node
     deployment, not a distributed quota system. Multi-node deployments must move
     this to Redis, otherwise the effective limit multiplies by the node count.
-    That tradeoff is fine at clinic scale and documented in the README.
+    That tradeoff is fine at business scale and documented in the README.
     """
 
     def __init__(self, app, rules: dict[str, tuple[int, int]]) -> None:

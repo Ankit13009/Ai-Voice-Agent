@@ -1,9 +1,13 @@
-# Clinic AI Receptionist
+# AI Receptionist Platform
 
-A multi-tenant AI phone receptionist for clinics. A patient calls, the agent
-answers in Hindi or English, checks the clinic's real Google Calendar, books,
-reschedules, or cancels the appointment, and WhatsApp confirmations and
-reminders follow automatically.
+A multi-tenant AI phone receptionist you onboard any appointment-based business
+onto. A customer calls, the agent answers in Hindi or English, checks that
+business's real Google Calendar, books, reschedules, or cancels, and WhatsApp
+confirmations and reminders follow automatically.
+
+Clinics, dental practices, salons, gyms, law firms, home services, and vets ship
+as presets. Adding another trade is one entry in `app/agent/presets.py`, or just
+the `general` preset with the fields edited. **No code path is trade-specific.**
 
 ```
 Patient call  ──▶  VAPI assistant (Hindi + English)
@@ -39,8 +43,9 @@ python seed.py --email you@yourdomain.in --password 'a-strong-password' --demo
 uvicorn app.main:app --reload --port 8000
 ```
 
-`--demo` creates a clinic with sample calls and appointments so every dashboard
-page has content before a single real call arrives.
+`--demo` creates **two different trades** (a clinic and a salon) on the same
+code, each with sample calls and appointments. Signing into each shows the
+platform relabelling itself: Patients/Doctors versus Clients/Stylists.
 
 Interactive API docs: <http://localhost:8000/docs> (disabled in production).
 
@@ -103,7 +108,7 @@ convention.
     "code": "VALIDATION_ERROR",
     "message": "Some of the submitted fields are invalid.",
     "details": [
-      { "field": "patient_phone", "message": "String should match pattern '^\\+[1-9]\\d{7,14}$'" }
+      { "field": "customer_phone", "message": "String should match pattern '^\\+[1-9]\\d{7,14}$'" }
     ]
   },
   "request_id": "req_…",
@@ -130,11 +135,11 @@ mirrored as a union in `frontend/types/api.ts`.
 | `TOKEN_INVALID` | 401 | Token is malformed, wrong type, or revoked. |
 | `FORBIDDEN` | 403 | Authenticated but not allowed. |
 | `INSUFFICIENT_ROLE` | 403 | Role does not permit this action. |
-| `CLINIC_ACCESS_DENIED` | 403 | Attempted to act on another clinic. |
+| `BUSINESS_ACCESS_DENIED` | 403 | Attempted to act on another business. |
 | `WEBHOOK_SIGNATURE_INVALID` | 403 | Webhook signature or secret did not verify. |
-| `NOT_FOUND` | 404 | No such resource *in your clinic*. |
+| `NOT_FOUND` | 404 | No such resource *in your business*. |
 | `CONFLICT` | 409 | State conflict, e.g. a past appointment time. |
-| `ALREADY_EXISTS` | 409 | Unique constraint, e.g. duplicate clinic slug. |
+| `ALREADY_EXISTS` | 409 | Unique constraint, e.g. duplicate business slug. |
 | `SLOT_UNAVAILABLE` | 409 | The time was taken between offer and booking. |
 | `RATE_LIMITED` | 429 | Too many attempts; `Retry-After` is set. |
 | `INTEGRATION_NOT_CONFIGURED` | 503 | Google Calendar / WhatsApp / VAPI not set up. |
@@ -163,21 +168,24 @@ presenting one twice is treated as theft and revokes every session for that
 user. The user row is re-read on every request, so deactivating an account takes
 effect immediately rather than whenever the token happens to expire.
 
-**Tenant isolation.** The active clinic id comes from the verified JWT, never
-from a request parameter. Passing `?clinic_id=<someone else's>` is ignored for
-clinic users and rejected outright. Single-object reads go through
-`scoped_get()`, which filters by primary key *and* clinic id in one query, so
+**Tenant isolation.** The active business id comes from the verified JWT, never
+from a request parameter. Passing `?business_id=<someone else's>` is ignored for
+business users and rejected outright. Single-object reads go through
+`scoped_get()`, which filters by primary key *and* business id in one query, so
 "exists but not yours" and "does not exist" are indistinguishable, in both the
 response and its timing.
 
 Verified against a second tenant:
 
 ```
-GET  /appointments/{other clinic's id}       → 404 NOT_FOUND
-GET  /patients/{other clinic's id}           → 404 NOT_FOUND
-GET  /calls?clinic_id={other clinic}         → 403 CLINIC_ACCESS_DENIED
-PATCH /appointments/{other}/cancel           → 404 NOT_FOUND
-POST /onboarding/clinics  (as clinic owner)  → 403 INSUFFICIENT_ROLE
+Verified with a clinic owner attacking a salon tenant:
+
+GET   /appointments/{salon's id}              → 404 NOT_FOUND
+GET   /customers/{salon's id}                 → 404 NOT_FOUND
+GET   /calls?business_id={salon}              → 403 BUSINESS_ACCESS_DENIED
+PATCH /appointments/{salon's}/cancel          → 404 NOT_FOUND
+PATCH /businesses/me?business_id={salon}      → 403 BUSINESS_ACCESS_DENIED
+GET   /onboarding/business-types (as owner)   → 403 INSUFFICIENT_ROLE
 ```
 
 **Webhook authentication.** VAPI webhooks require a shared secret compared with
@@ -203,6 +211,61 @@ Security headers and a strict CSP on every response. Privileged actions are
 written to an append-only audit log with actor, IP, and request id. API docs are
 disabled in production. Startup refuses to boot a production deploy that is
 missing any security-critical setting.
+
+---
+
+## Onboarding any business type
+
+This is the part that makes it a platform rather than one vertical.
+
+**One codebase, config-driven.** A tenant row carries its own vocabulary,
+persona, intake questions, rules, and escalation path. The agent's prompt, the
+tool descriptions, and the dashboard's labels are all composed from those
+columns at runtime. Nothing in `app/` branches on trade.
+
+**Presets are a starting point, not a constraint.** `GET /api/v1/onboarding/business-types`
+returns the presets; picking one pre-fills the form. Every value it supplies is
+then an editable column on the tenant, so a business nobody anticipated is a
+form submission, never a deploy.
+
+| Preset | Customers / Staff | Rules | Escalation |
+|---|---|---|---|
+| `clinic` | Patients / Doctors | no diagnosis, no prices, no symptom detail | medical emergency |
+| `dental` | Patients / Dentists | no treatment advice, no price quotes | swelling, bleeding |
+| `salon` | Clients / Stylists | ask the service, no invented prices | none |
+| `gym` | Members / Trainers | no training or nutrition advice | none |
+| `law` | Clients / Solicitors | no legal advice, no fee quotes, no detail by phone | deadline within 2 days |
+| `home_services` | Customers / Technicians | address required, judge urgency, no price quotes | gas, fire, flooding |
+| `veterinary` | Pet owners / Vets | no diagnosis, no dosage advice | animal in distress |
+| `general` | Customers / Team members | minimal | none |
+
+The same call, in two trades, from identical code:
+
+```
+Sunrise Multispeciality Clinic (business_type=clinic)
+  "You are Asha, the phone receptionist for Sunrise Multispeciality Clinic,
+   a medical clinic. …with a patient or someone calling on their behalf."
+  Rules:  not a clinician, never diagnose, no symptom detail, no prices
+  Urgent: chest pain / bleeding → tell them to go to emergency, end the call
+  Intake: … 4. Preferred doctor (only if they offer it)
+
+Glow Studio (business_type=salon)
+  "You are Riya, the phone receptionist for Glow Studio, a salon and spa.
+   …with a client or someone calling on their behalf."
+  Rules:  ask which service, never quote a price, offer the stylist's next opening
+  Urgent: (none)
+  Intake: … 4. Preferred stylist (only if they offer it)
+```
+
+### Credentials: set once, works from then on
+
+| Credential | Scope | Who sets it |
+|---|---|---|
+| VAPI API key, Google client id/secret, WhatsApp token | **Platform** (`.env`) | You, once |
+| VAPI assistant, WhatsApp number, phone number | **Per tenant** | Created automatically on onboard |
+| Google Calendar OAuth | **Per tenant** | The business owner connects their own |
+
+So onboarding business #100 is one authenticated POST. No code, no redeploy.
 
 ---
 
@@ -297,30 +360,33 @@ switching voice mid-call, and Claude Haiku for low phone latency.
 
 ---
 
-## Adding a clinic
+## Adding a business
 
 One authenticated request as a superadmin creates the tenant, its owner login,
-its doctors, its appointment types, and its VAPI assistant:
+its staff, its services, and its VAPI assistant, seeded from the chosen preset:
 
 ```bash
-curl -X POST https://<your-api>/api/v1/onboarding/clinics \
+curl -X POST https://<your-api>/api/v1/onboarding/businesses \
   -H "Authorization: Bearer <superadmin token>" \
   -H "Content-Type: application/json" \
   -d '{
-    "name": "Sunrise Multispeciality Clinic",
-    "slug": "sunrise-delhi",
-    "phone_number": "+911140001234",
-    "owner_email": "owner@sunriseclinic.in",
+    "name": "Glow Studio",
+    "slug": "glow-studio",
+    "phone_number": "+911140005678",
+    "business_type": "salon",
+    "owner_email": "owner@glowstudio.in",
     "owner_password": "a-strong-password",
     "timezone": "Asia/Kolkata",
     "primary_language": "hi-en",
-    "doctors": [{ "name": "Dr. Meera Sharma", "specialization": "General Physician" }]
+    "staff_members": [{ "name": "Kabir Shah", "specialization": "Colour Specialist" }]
   }'
 ```
 
-Anything that could not be completed automatically comes back in `next_steps`
-as a checklist, rather than failing the whole clinic because one external
-service was down.
+Override any preset value inline (`labels`, `agent_rules`, `intake_fields`,
+`escalation_instructions`), or leave them out and edit later in Settings.
+Anything onboarding could not finish automatically comes back in `next_steps` as
+a checklist, rather than failing the whole business because one third party was
+down.
 
 ---
 
@@ -336,3 +402,6 @@ service was down.
 - **Call outcome is inferred** from what changed in the database during the
   call, not self-reported by the model. A caller who books from a number
   different to the one they are calling from may be classified as an enquiry.
+- **WhatsApp templates are shared across trades.** They say "appointment",
+  which reads fine for every preset, but a trade wanting its own wording needs
+  its own Meta-approved templates.

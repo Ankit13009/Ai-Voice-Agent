@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 
-import { clinicApi, dashboardApi } from "@/lib/api/endpoints";
+import { businessApi, dashboardApi } from "@/lib/api/endpoints";
 import { useApiQuery } from "@/lib/useApi";
 import { formatDuration } from "@/lib/format";
 import {
@@ -18,9 +18,9 @@ import {
 
 export default function OverviewPage() {
   const stats = useApiQuery((signal) => dashboardApi.stats(signal), []);
-  const clinic = useApiQuery((signal) => clinicApi.me(signal), []);
+  const business = useApiQuery((signal) => businessApi.me(signal), []);
 
-  if (stats.loading || clinic.loading) return <PageLoading />;
+  if (stats.loading || business.loading) return <PageLoading />;
 
   if (stats.error) {
     return (
@@ -31,7 +31,7 @@ export default function OverviewPage() {
   }
 
   const data = stats.data;
-  const integrations = clinic.data?.integrations;
+  const integrations = business.data?.integrations;
 
   // Surfaced at the top because each one silently breaks a core feature: no
   // calendar means the agent cannot book, no WhatsApp means no reminders.
@@ -59,7 +59,7 @@ export default function OverviewPage() {
     <>
       <PageHeader
         title="Overview"
-        description={clinic.data ? `${clinic.data.name} · ${clinic.data.phone_number}` : undefined}
+        description={business.data ? `${business.data.name} · ${business.data.phone_number}` : undefined}
       />
 
       {problems.length > 0 && (
@@ -109,7 +109,7 @@ export default function OverviewPage() {
         <Card>
           <CardHeader
             title="WhatsApp"
-            description="Confirmations and reminders sent to patients."
+            description="Confirmations and reminders sent to customers."
             action={
               <Link href="/messages">
                 <Button size="sm" variant="ghost">

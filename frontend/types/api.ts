@@ -25,7 +25,7 @@ export interface PaginationMeta {
 }
 
 export interface ApiFieldError {
-  /** Dotted path to the offending input, e.g. "patient_phone". */
+  /** Dotted path to the offending input, e.g. "customer_phone". */
   field: string;
   message: string;
 }
@@ -127,7 +127,7 @@ export interface User {
   email: string;
   full_name: string;
   role: UserRole;
-  clinic_id: string | null;
+  business_id: string | null;
   last_login_at: string | null;
 }
 
@@ -155,9 +155,9 @@ export interface ChangePasswordRequest {
 }
 
 // --------------------------------------------------------------------------- //
-// Clinic
+// Business
 // --------------------------------------------------------------------------- //
-export interface Doctor {
+export interface StaffMember {
   id: string;
   name: string;
   specialization: string;
@@ -174,7 +174,37 @@ export interface IntegrationStatus {
   whatsapp_configured: boolean;
 }
 
-export interface Clinic {
+export interface BusinessLabels {
+  customer_singular: string;
+  customer_plural: string;
+  staff_singular: string;
+  staff_plural: string;
+  booking_singular: string;
+  booking_plural: string;
+}
+
+export interface IntakeField {
+  key: string;
+  label: string;
+  required: boolean;
+  guidance: string;
+}
+
+/** A starting point offered on the onboarding form. Every value stays editable. */
+export interface BusinessTypePreset {
+  slug: string;
+  display_name: string;
+  default_agent_name: string;
+  business_descriptor: string;
+  labels: BusinessLabels;
+  intake_fields: IntakeField[];
+  rules: string[];
+  escalation: string;
+  example_services: string[];
+  default_slot_minutes: number;
+}
+
+export interface Business {
   id: string;
   name: string;
   slug: string;
@@ -184,15 +214,23 @@ export interface Clinic {
   contact_email: string;
   timezone: string;
 
+  /** Business type configuration. Seeded from a preset, then owned by the tenant. */
+  business_type: string;
+  business_descriptor: string;
+  labels: BusinessLabels;
+  intake_fields: IntakeField[];
+  agent_rules: string[];
+  escalation_instructions: string;
+
   agent_name: string;
-  /** The number patients dial. Not editable from settings. */
+  /** The number customers dial. Not editable from settings. */
   phone_number: string;
   primary_language: Language;
   greeting_en: string;
   greeting_hi: string;
   agent_notes: string;
 
-  /** "HH:MM:SS" in the clinic's own timezone. */
+  /** "HH:MM:SS" in the business's own timezone. */
   opens_at: string;
   closes_at: string;
   /** ISO weekday numbers: 1 = Monday ... 7 = Sunday. */
@@ -205,11 +243,17 @@ export interface Clinic {
   is_active: boolean;
 
   integrations: IntegrationStatus | null;
-  doctors: Doctor[];
+  staff_members: StaffMember[];
 }
 
-export interface ClinicUpdateRequest {
+export interface BusinessUpdateRequest {
   name?: string;
+  business_type?: string;
+  business_descriptor?: string;
+  labels?: BusinessLabels;
+  intake_fields?: IntakeField[];
+  agent_rules?: string[];
+  escalation_instructions?: string;
   address?: string;
   city?: string;
   contact_phone?: string;
@@ -229,34 +273,34 @@ export interface ClinicUpdateRequest {
   reminder_2h_enabled?: boolean;
 }
 
-export interface DoctorCreateRequest {
+export interface StaffMemberCreateRequest {
   name: string;
   specialization?: string;
   google_calendar_id?: string;
   consultation_duration_minutes?: number;
 }
 
-export type DoctorUpdateRequest = Partial<DoctorCreateRequest> & {
+export type StaffMemberUpdateRequest = Partial<StaffMemberCreateRequest> & {
   is_active?: boolean;
 };
 
 // --------------------------------------------------------------------------- //
-// Patients
+// Customers
 // --------------------------------------------------------------------------- //
-export interface PatientSummary {
+export interface CustomerSummary {
   id: string;
   name: string;
   phone: string;
 }
 
-export interface Patient extends PatientSummary {
+export interface Customer extends CustomerSummary {
   email: string;
   preferred_language: Language;
   notes: string;
   created_at: string;
 }
 
-export interface PatientDetail extends Patient {
+export interface CustomerDetail extends Customer {
   appointments: Array<{
     id: string;
     starts_at: string;
@@ -267,7 +311,7 @@ export interface PatientDetail extends Patient {
   upcoming_appointments: number;
 }
 
-export interface PatientUpdateRequest {
+export interface CustomerUpdateRequest {
   name?: string;
   email?: string;
   preferred_language?: Language;
@@ -281,10 +325,10 @@ export interface Slot {
   /** UTC ISO-8601. Pass back verbatim when booking. */
   starts_at: string;
   ends_at: string;
-  /** Pre-formatted in the clinic's timezone, safe to render directly. */
+  /** Pre-formatted in the business's timezone, safe to render directly. */
   label: string;
-  doctor_id: string | null;
-  doctor_name: string;
+  staff_member_id: string | null;
+  staff_member_name: string;
 }
 
 export interface Appointment {
@@ -293,14 +337,14 @@ export interface Appointment {
   /** UTC ISO-8601. */
   starts_at: string;
   ends_at: string;
-  /** Same instant, pre-rendered in the clinic's timezone. Prefer this for display. */
+  /** Same instant, pre-rendered in the business's timezone. Prefer this for display. */
   starts_at_local: string;
   reason: string;
   notes: string;
   cancellation_reason: string;
-  patient: PatientSummary;
-  doctor_id: string | null;
-  doctor_name: string;
+  customer: CustomerSummary;
+  staff_member_id: string | null;
+  staff_member_name: string;
   call_id: string | null;
   google_event_id: string;
   synced_to_calendar: boolean;
@@ -309,12 +353,12 @@ export interface Appointment {
 }
 
 export interface AppointmentCreateRequest {
-  patient_name: string;
+  customer_name: string;
   /** E.164, e.g. "+919876543210". */
-  patient_phone: string;
+  customer_phone: string;
   /** ISO-8601 including an offset. A naive value is rejected by the API. */
   starts_at: string;
-  doctor_id?: string | null;
+  staff_member_id?: string | null;
   appointment_type_id?: string | null;
   duration_minutes?: number;
   reason?: string;
@@ -324,13 +368,13 @@ export interface AppointmentCreateRequest {
 
 export interface AppointmentRescheduleRequest {
   starts_at: string;
-  doctor_id?: string | null;
+  staff_member_id?: string | null;
   reason?: string;
 }
 
 export interface AppointmentCancelRequest {
   reason?: string;
-  notify_patient?: boolean;
+  notify_customer?: boolean;
 }
 
 // --------------------------------------------------------------------------- //
@@ -348,7 +392,7 @@ export interface Call {
   summary: string;
   recording_url: string;
   ended_reason: string;
-  patient: PatientSummary | null;
+  customer: CustomerSummary | null;
   appointment_id: string | null;
   created_at: string;
 }
@@ -370,7 +414,7 @@ export interface WhatsAppMessage {
   status: MessageStatus;
   template_name: string;
   language_code: string;
-  /** The message as the patient sees it, with variables filled in. */
+  /** The message as the customer sees it, with variables filled in. */
   rendered_preview: string;
   scheduled_for: string | null;
   sent_at: string | null;
@@ -434,13 +478,13 @@ export interface OnboardClinicRequest {
   closes_at?: string;
   working_days?: number[];
   slot_duration_minutes?: number;
-  doctors?: DoctorCreateRequest[];
+  staff_members?: StaffMemberCreateRequest[];
   appointment_types?: string[];
   create_vapi_assistant?: boolean;
 }
 
 export interface OnboardClinicResponse {
-  clinic: Clinic;
+  business: Business;
   owner_user_id: string;
   vapi_assistant_id: string;
   /** Steps onboarding could not complete automatically. Render as a checklist. */
@@ -462,13 +506,13 @@ export interface CallListQuery extends PageQuery {
 
 export interface AppointmentListQuery extends PageQuery {
   status?: AppointmentStatus;
-  doctor_id?: string;
+  staff_member_id?: string;
   date_from?: string;
   date_to?: string;
   search?: string;
 }
 
-export interface PatientListQuery extends PageQuery {
+export interface CustomerListQuery extends PageQuery {
   search?: string;
 }
 
@@ -481,7 +525,7 @@ export interface MessageListQuery extends PageQuery {
 export interface AvailabilityQuery {
   date_from?: string;
   date_to?: string;
-  doctor_id?: string;
+  staff_member_id?: string;
   duration_minutes?: number;
   limit?: number;
 }

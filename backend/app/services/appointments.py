@@ -21,18 +21,18 @@ from app.db.models import (
     Appointment,
     AppointmentStatus,
     AppointmentType,
-    Clinic,
-    Doctor,
+    Business,
+    StaffMember,
     Language,
     MessageKind,
-    Patient,
+    Customer,
 )
 from app.services import google_calendar as gcal
 from app.services import whatsapp
 
 logger = logging.getLogger(__name__)
 
-# Reminders closer than this to the appointment are pointless: the patient is
+# Reminders closer than this to the appointment are pointless: the customer is
 # already travelling. The row is skipped rather than queued in the past.
 MIN_REMINDER_LEAD = timedelta(minutes=10)
 
@@ -40,58 +40,58 @@ MIN_REMINDER_LEAD = timedelta(minutes=10)
 async def get_or_create_patient(
     db: AsyncSession,
     *,
-    clinic_id: str,
+    business_id: str,
     phone: str,
     name: str = "",
     language: Language = Language.MIXED,
-) -> Patient:
-    """Look up a patient by phone within the clinic, creating them if new.
+) -> Customer:
+    """Look up a customer by phone within the business, creating them if new.
 
-    Scoped to `clinic_id` by the unique constraint on (clinic_id, phone), so two
-    clinics can hold the same phone number as separate patient records, which is
+    Scoped to `business_id` by the unique constraint on (business_id, phone), so two
+    businesses can hold the same phone number as separate customer records, which is
     both correct and required for tenant isolation.
     """
-    patient = (
+    customer = (
         await db.execute(
-            select(Patient).where(Patient.clinic_id == clinic_id, Patient.phone == phone)
+            select(Customer).where(Customer.business_id == business_id, Customer.phone == phone)
         )
     ).scalar_one_or_none()
 
-    if patient is None:
-        patient = Patient(
-            clinic_id=clinic_id, phone=phone, name=name, preferred_language=language
+    if customer is None:
+        customer = Customer(
+            business_id=business_id, phone=phone, name=name, preferred_language=language
         )
-        db.add(patient)
+        db.add(customer)
         await db.flush()
-        logger.info("Created patient %s for clinic %s", patient.id, clinic_id)
-        return patient
+        logger.info("Created customer %s for business %s", customer.id, business_id)
+        return customer
 
     # Fill in a name we didn't have before; never overwrite one we did.
-    if name and not patient.name:
-        patient.name = name
+    if name and not customer.name:
+        customer.name = name
     if language != Language.MIXED:
-        patient.preferred_language = language
+        customer.preferred_language = language
     await db.flush()
-    return patient
+    return customer
 
 
-async def _resolve_doctor(db: AsyncSession, clinic_id: str, doctor_id: str | None) -> Doctor | None:
-    if not doctor_id:
+async def _resolve_doctor(db: AsyncSession, business_id: str, staff_member_id: str | None) -> StaffMember | None:
+    if not staff_member_id:
         return None
-    doctor = (
+    staff_member = (
         await db.execute(
-            select(Doctor).where(Doctor.id == doctor_id, Doctor.clinic_id == clinic_id)
+            select(StaffMember).where(StaffMember.id == staff_member_id, StaffMember.business_id == business_id)
         )
     ).scalar_one_or_none()
-    if doctor is None:
-        raise NotFoundError("Doctor")
-    return doctor
+    if staff_member is None:
+        raise NotFoundError("StaffMember")
+    return staff_member
 
 
 async def _resolve_duration(
     db: AsyncSession,
-    clinic: Clinic,
-    doctor: Doctor | None,
+    business: Business,
+    staff_member: StaffMember | None,
     appointment_type_id: str | None,
     explicit_minutes: int | None,
 ) -> int:
@@ -102,23 +102,23 @@ async def _resolve_duration(
             await db.execute(
                 select(AppointmentType).where(
                     AppointmentType.id == appointment_type_id,
-                    AppointmentType.clinic_id == clinic.id,
+                    AppointmentType.business_id == business.id,
                 )
             )
         ).scalar_one_or_none()
         if appt_type:
             return appt_type.duration_minutes
-    if doctor:
-        return doctor.consultation_duration_minutes
-    return clinic.slot_duration_minutes
+    if staff_member:
+        return staff_member.consultation_duration_minutes
+    return business.slot_duration_minutes
 
 
 async def _check_local_conflict(
     db: AsyncSession,
-    clinic_id: str,
+    business_id: str,
     start: datetime,
     end: datetime,
-    doctor_id: str | None,
+    staff_member_id: str | None,
     exclude_appointment_id: str | None = None,
 ) -> None:
     """Reject a double-booking against our own rows.
@@ -128,13 +128,13 @@ async def _check_local_conflict(
     reaches Google. This is the guard that closes that window.
     """
     stmt = select(Appointment).where(
-        Appointment.clinic_id == clinic_id,
+        Appointment.business_id == business_id,
         Appointment.status.in_([AppointmentStatus.SCHEDULED, AppointmentStatus.RESCHEDULED]),
         Appointment.starts_at < end,
         Appointment.ends_at > start,
     )
-    if doctor_id:
-        stmt = stmt.where(Appointment.doctor_id == doctor_id)
+    if staff_member_id:
+        stmt = stmt.where(Appointment.staff_member_id == staff_member_id)
     if exclude_appointment_id:
         stmt = stmt.where(Appointment.id != exclude_appointment_id)
 
@@ -148,8 +148,8 @@ async def _check_local_conflict(
 
 async def _queue_appointment_messages(
     db: AsyncSession,
-    clinic: Clinic,
-    patient: Patient,
+    business: Business,
+    customer: Customer,
     appointment: Appointment,
     *,
     confirmation_kind: MessageKind = MessageKind.CONFIRMATION,
@@ -159,8 +159,8 @@ async def _queue_appointment_messages(
 
     await whatsapp.queue_message(
         db,
-        clinic=clinic,
-        patient=patient,
+        business=business,
+        customer=customer,
         appointment=appointment,
         kind=confirmation_kind,
         scheduled_for=now,  # due immediately; the scheduler picks it up next tick
@@ -180,8 +180,8 @@ async def _queue_appointment_messages(
             continue
         await whatsapp.queue_message(
             db,
-            clinic=clinic,
-            patient=patient,
+            business=business,
+            customer=customer,
             appointment=appointment,
             kind=kind,
             scheduled_for=send_at,
@@ -190,12 +190,12 @@ async def _queue_appointment_messages(
 
 async def book_appointment(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     *,
-    patient_name: str,
-    patient_phone: str,
+    customer_name: str,
+    customer_phone: str,
     starts_at: datetime,
-    doctor_id: str | None = None,
+    staff_member_id: str | None = None,
     appointment_type_id: str | None = None,
     duration_minutes: int | None = None,
     reason: str = "",
@@ -211,38 +211,38 @@ async def book_appointment(
     if starts_at <= datetime.now(timezone.utc):
         raise ConflictError("That appointment time is in the past.")
 
-    doctor = await _resolve_doctor(db, clinic.id, doctor_id)
-    minutes = await _resolve_duration(db, clinic, doctor, appointment_type_id, duration_minutes)
+    staff_member = await _resolve_doctor(db, business.id, staff_member_id)
+    minutes = await _resolve_duration(db, business, staff_member, appointment_type_id, duration_minutes)
     ends_at = starts_at + timedelta(minutes=minutes)
 
-    await _check_local_conflict(db, clinic.id, starts_at, ends_at, doctor_id)
+    await _check_local_conflict(db, business.id, starts_at, ends_at, staff_member_id)
 
     # Re-verify against the live calendar. The slot may have been offered on the
     # call a minute ago and taken by a walk-in since.
-    if not await gcal.is_slot_free(db, clinic, starts_at, ends_at, doctor):
+    if not await gcal.is_slot_free(db, business, starts_at, ends_at, staff_member):
         raise SlotUnavailableError()
 
-    patient = await get_or_create_patient(
-        db, clinic_id=clinic.id, phone=patient_phone, name=patient_name, language=language
+    customer = await get_or_create_patient(
+        db, business_id=business.id, phone=customer_phone, name=customer_name, language=language
     )
 
     # Calendar first: a failure here must abort the booking, not leave a row that
     # claims an appointment nobody's calendar knows about.
     event_id, calendar_id = await gcal.create_event(
         db,
-        clinic,
-        patient_name=patient.name or patient_name,
-        patient_phone=patient.phone,
+        business,
+        customer_name=customer.name or customer_name,
+        customer_phone=customer.phone,
         reason=reason,
         start=starts_at,
         end=ends_at,
-        doctor=doctor,
+        staff_member=staff_member,
     )
 
     appointment = Appointment(
-        clinic_id=clinic.id,
-        patient_id=patient.id,
-        doctor_id=doctor.id if doctor else None,
+        business_id=business.id,
+        customer_id=customer.id,
+        staff_member_id=staff_member.id if staff_member else None,
         appointment_type_id=appointment_type_id,
         call_id=call_id,
         starts_at=starts_at,
@@ -256,21 +256,21 @@ async def book_appointment(
     db.add(appointment)
     await db.flush()
 
-    await _queue_appointment_messages(db, clinic, patient, appointment)
+    await _queue_appointment_messages(db, business, customer, appointment)
 
     logger.info(
-        "Booked appointment %s for clinic %s at %s", appointment.id, clinic.id, starts_at
+        "Booked appointment %s for business %s at %s", appointment.id, business.id, starts_at
     )
     return appointment
 
 
 async def reschedule_appointment(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     appointment: Appointment,
     *,
     starts_at: datetime,
-    doctor_id: str | None = None,
+    staff_member_id: str | None = None,
     reason: str = "",
 ) -> Appointment:
     """Move an appointment to a new time, in our records and on the calendar."""
@@ -281,23 +281,23 @@ async def reschedule_appointment(
     if starts_at <= datetime.now(timezone.utc):
         raise ConflictError("The new appointment time is in the past.")
 
-    target_doctor_id = doctor_id or appointment.doctor_id
-    doctor = await _resolve_doctor(db, clinic.id, target_doctor_id)
+    target_doctor_id = staff_member_id or appointment.staff_member_id
+    staff_member = await _resolve_doctor(db, business.id, target_doctor_id)
     minutes = int((appointment.ends_at - appointment.starts_at).total_seconds() // 60)
     ends_at = starts_at + timedelta(minutes=minutes)
 
     await _check_local_conflict(
-        db, clinic.id, starts_at, ends_at, target_doctor_id, exclude_appointment_id=appointment.id
+        db, business.id, starts_at, ends_at, target_doctor_id, exclude_appointment_id=appointment.id
     )
-    if not await gcal.is_slot_free(db, clinic, starts_at, ends_at, doctor):
+    if not await gcal.is_slot_free(db, business, starts_at, ends_at, staff_member):
         raise SlotUnavailableError()
 
-    await gcal.update_event_time(db, clinic, appointment, start=starts_at, end=ends_at)
+    await gcal.update_event_time(db, business, appointment, start=starts_at, end=ends_at)
 
     previous_start = appointment.starts_at
     appointment.starts_at = starts_at
     appointment.ends_at = ends_at
-    appointment.doctor_id = target_doctor_id
+    appointment.staff_member_id = target_doctor_id
     appointment.status = AppointmentStatus.RESCHEDULED
     if reason:
         appointment.notes = f"{appointment.notes}\nRescheduled: {reason}".strip()
@@ -307,11 +307,11 @@ async def reschedule_appointment(
     # ones for the new time.
     await whatsapp.cancel_pending_messages(db, appointment.id)
 
-    patient = (
-        await db.execute(select(Patient).where(Patient.id == appointment.patient_id))
+    customer = (
+        await db.execute(select(Customer).where(Customer.id == appointment.customer_id))
     ).scalar_one()
     await _queue_appointment_messages(
-        db, clinic, patient, appointment, confirmation_kind=MessageKind.RESCHEDULE
+        db, business, customer, appointment, confirmation_kind=MessageKind.RESCHEDULE
     )
 
     logger.info(
@@ -322,11 +322,11 @@ async def reschedule_appointment(
 
 async def cancel_appointment(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     appointment: Appointment,
     *,
     reason: str = "",
-    notify_patient: bool = True,
+    notify_customer: bool = True,
 ) -> Appointment:
     """Cancel: remove the calendar event, kill pending reminders, notify."""
     if appointment.status == AppointmentStatus.CANCELLED:
@@ -334,47 +334,47 @@ async def cancel_appointment(
         # the agent can both act on stale state without failing the user.
         return appointment
 
-    await gcal.delete_event(db, clinic, appointment)
+    await gcal.delete_event(db, business, appointment)
 
     appointment.status = AppointmentStatus.CANCELLED
     appointment.cancellation_reason = reason
     await db.flush()
 
-    # Always kill the reminders, even when not notifying. A cancelled patient
+    # Always kill the reminders, even when not notifying. A cancelled customer
     # must never get "your appointment is tomorrow".
     await whatsapp.cancel_pending_messages(db, appointment.id)
 
-    if notify_patient and clinic.whatsapp_enabled:
-        patient = (
-            await db.execute(select(Patient).where(Patient.id == appointment.patient_id))
+    if notify_customer and business.whatsapp_enabled:
+        customer = (
+            await db.execute(select(Customer).where(Customer.id == appointment.customer_id))
         ).scalar_one()
         await whatsapp.queue_message(
             db,
-            clinic=clinic,
-            patient=patient,
+            business=business,
+            customer=customer,
             appointment=appointment,
             kind=MessageKind.CANCELLATION,
             scheduled_for=datetime.now(timezone.utc),
         )
 
-    logger.info("Cancelled appointment %s for clinic %s", appointment.id, clinic.id)
+    logger.info("Cancelled appointment %s for business %s", appointment.id, business.id)
     return appointment
 
 
-async def find_patient_appointment(
-    db: AsyncSession, clinic_id: str, phone: str
+async def find_customer_appointment(
+    db: AsyncSession, business_id: str, phone: str
 ) -> Appointment | None:
     """The caller's next upcoming appointment, for "cancel my appointment".
 
-    Matched on the calling number within the clinic, so the agent never needs to
-    read an appointment id aloud, and can never reach another clinic's records.
+    Matched on the calling number within the business, so the agent never needs to
+    read an appointment id aloud, and can never reach another business's records.
     """
     stmt = (
         select(Appointment)
-        .join(Patient, Appointment.patient_id == Patient.id)
+        .join(Customer, Appointment.customer_id == Customer.id)
         .where(
-            Appointment.clinic_id == clinic_id,
-            Patient.phone == phone,
+            Appointment.business_id == business_id,
+            Customer.phone == phone,
             Appointment.status.in_([AppointmentStatus.SCHEDULED, AppointmentStatus.RESCHEDULED]),
             Appointment.starts_at > datetime.now(timezone.utc),
         )

@@ -1,21 +1,21 @@
-"""VAPI client: create and update the per-clinic assistant from one master template.
+"""VAPI client: create and update the per-business assistant from one master template.
 
-This is the "master template, one click to add a clinic" mechanism. There is a
+This is the "master template, one click to add a business" mechanism. There is a
 single assistant *shape* defined in `build_assistant_payload`; onboarding a
-clinic renders that shape with the clinic's own prompt, greeting, and voice, and
-creates a VAPI assistant from it. Nothing about a new clinic requires touching
+business renders that shape with the business's own prompt, greeting, and voice, and
+creates a VAPI assistant from it. Nothing about a new business requires touching
 code or the VAPI dashboard.
 
 Provider choices, and why:
 
 * Transcriber: Deepgram nova-2 with `language: multi`, which is Deepgram's
   code-switching model. Hindi-English switching mid-sentence is the normal case
-  for Indian clinic callers, and a single-language model transcribes the other
+  for Indian business callers, and a single-language model transcribes the other
   half as noise.
 * Voice: Azure `hi-IN-SwaraNeural` speaks both Hindi and English acceptably in
   one voice, so the agent does not change voice when the caller switches.
 * Model: Claude, for instruction-following on the medical-boundary rules. Haiku
-  keeps phone latency low; the model id is overridable per clinic.
+  keeps phone latency low; the model id is overridable per business.
 """
 
 import logging
@@ -27,7 +27,7 @@ from app.config import get_settings
 from app.core.errors import IntegrationNotConfiguredError, UpstreamError
 from app.agent.prompts import build_greeting, build_system_prompt
 from app.agent.tools import build_vapi_tools
-from app.db.models import Clinic, Doctor, Language
+from app.db.models import Business, StaffMember, Language
 
 logger = logging.getLogger(__name__)
 
@@ -55,14 +55,14 @@ def _headers() -> dict[str, str]:
     }
 
 
-def build_assistant_payload(clinic: Clinic, doctors: list[Doctor]) -> dict[str, Any]:
-    """The master template, rendered for one clinic."""
+def build_assistant_payload(business: Business, staff_members: list[StaffMember]) -> dict[str, Any]:
+    """The master template, rendered for one business."""
     settings = get_settings()
-    voice = VOICE_BY_LANGUAGE.get(clinic.primary_language, VOICE_BY_LANGUAGE[Language.MIXED])
+    voice = VOICE_BY_LANGUAGE.get(business.primary_language, VOICE_BY_LANGUAGE[Language.MIXED])
 
     return {
-        "name": f"{clinic.name} receptionist ({clinic.slug})",
-        "firstMessage": build_greeting(clinic),
+        "name": f"{business.name} receptionist ({business.slug})",
+        "firstMessage": build_greeting(business),
         # Speak first: a silent pickup makes callers think the line is dead.
         "firstMessageMode": "assistant-speaks-first",
         "model": {
@@ -71,9 +71,9 @@ def build_assistant_payload(clinic: Clinic, doctors: list[Doctor]) -> dict[str, 
             "temperature": 0.4,  # low: this agent follows rules, it does not riff
             "maxTokens": 300,  # phone replies are one or two sentences
             "messages": [
-                {"role": "system", "content": build_system_prompt(clinic, doctors)}
+                {"role": "system", "content": build_system_prompt(business, staff_members)}
             ],
-            "tools": build_vapi_tools(),
+            "tools": build_vapi_tools(business),
         },
         "transcriber": {
             "provider": "deepgram",
@@ -94,7 +94,7 @@ def build_assistant_payload(clinic: Clinic, doctors: list[Doctor]) -> dict[str, 
         "endCallMessage": "Thank you for calling. Take care.",
         "backgroundDenoisingEnabled": True,
         "recordingEnabled": True,
-        "metadata": {"clinic_id": clinic.id, "clinic_slug": clinic.slug},
+        "metadata": {"business_id": business.id, "clinic_slug": business.slug},
     }
 
 
@@ -109,34 +109,34 @@ async def _request(method: str, path: str, json_body: dict | None = None) -> dic
     raise UpstreamError("VAPI", log_context={"status": response.status_code, "path": path})
 
 
-async def create_assistant(clinic: Clinic, doctors: list[Doctor]) -> str:
-    """Create the clinic's assistant. Returns the VAPI assistant id."""
-    data = await _request("POST", "/assistant", build_assistant_payload(clinic, doctors))
+async def create_assistant(business: Business, staff_members: list[StaffMember]) -> str:
+    """Create the business's assistant. Returns the VAPI assistant id."""
+    data = await _request("POST", "/assistant", build_assistant_payload(business, staff_members))
     assistant_id = data.get("id", "")
-    logger.info("Created VAPI assistant %s for clinic %s", assistant_id, clinic.id)
+    logger.info("Created VAPI assistant %s for business %s", assistant_id, business.id)
     return assistant_id
 
 
-async def update_assistant(clinic: Clinic, doctors: list[Doctor]) -> None:
+async def update_assistant(business: Business, staff_members: list[StaffMember]) -> None:
     """Re-push the assistant after a settings change.
 
-    Called whenever clinic hours, greeting, language, or doctors change: the
+    Called whenever business hours, greeting, language, or staff_members change: the
     prompt embeds those facts, so a stale assistant would quote last week's
     timings to callers.
     """
-    if not clinic.vapi_assistant_id:
-        logger.info("Clinic %s has no VAPI assistant to update.", clinic.id)
+    if not business.vapi_assistant_id:
+        logger.info("Business %s has no VAPI assistant to update.", business.id)
         return
     await _request(
         "PATCH",
-        f"/assistant/{clinic.vapi_assistant_id}",
-        build_assistant_payload(clinic, doctors),
+        f"/assistant/{business.vapi_assistant_id}",
+        build_assistant_payload(business, staff_members),
     )
-    logger.info("Updated VAPI assistant %s for clinic %s", clinic.vapi_assistant_id, clinic.id)
+    logger.info("Updated VAPI assistant %s for business %s", business.vapi_assistant_id, business.id)
 
 
 async def attach_phone_number(phone_number_id: str, assistant_id: str) -> None:
-    """Route an inbound VAPI number to this clinic's assistant."""
+    """Route an inbound VAPI number to this business's assistant."""
     await _request("PATCH", f"/phone-number/{phone_number_id}", {"assistantId": assistant_id})
     logger.info("Attached VAPI number %s to assistant %s", phone_number_id, assistant_id)
 
@@ -147,5 +147,5 @@ async def delete_assistant(assistant_id: str) -> None:
     try:
         await _request("DELETE", f"/assistant/{assistant_id}")
     except UpstreamError:
-        # Cleanup path: a failure here should not block deactivating a clinic.
+        # Cleanup path: a failure here should not block deactivating a business.
         logger.warning("Could not delete VAPI assistant %s.", assistant_id)

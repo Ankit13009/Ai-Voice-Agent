@@ -202,7 +202,7 @@ export default function MessagesPage() {
       <p className="text-xs text-ink-subtle mt-4">
         Templates must be approved by Meta before they can be sent. Utility templates
         cost roughly ₹0.115 each, and are free inside a 24-hour window opened by a
-        patient replying.
+        customer replying.
       </p>
     </>
   );

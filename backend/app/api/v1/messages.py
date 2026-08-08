@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from sqlalchemy import func, select
 
 from app.core.deps import (
-    ActiveClinic,
+    ActiveBusiness,
     CurrentUserDep,
     DbSession,
     Paging,
@@ -17,7 +17,7 @@ from app.core.deps import (
 )
 from app.core.errors import ConflictError
 from app.core.response import ok, paginated
-from app.db.models import Clinic, MessageKind, MessageStatus, WhatsAppMessage
+from app.db.models import Business, MessageKind, MessageStatus, WhatsAppMessage
 from app.services import whatsapp
 
 logger = logging.getLogger(__name__)
@@ -46,7 +46,7 @@ def _serialize(message: WhatsAppMessage) -> dict:
 
 @router.get("", summary="WhatsApp message log")
 async def list_messages(
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     paging: Paging,
     _user: CurrentUserDep,
@@ -54,7 +54,7 @@ async def list_messages(
     kind: Annotated[MessageKind | None, Query()] = None,
     appointment_id: Annotated[str | None, Query()] = None,
 ) -> dict:
-    filters = [WhatsAppMessage.clinic_id == clinic_id]
+    filters = [WhatsAppMessage.business_id == business_id]
     if status:
         filters.append(WhatsAppMessage.status == status)
     if kind:
@@ -84,25 +84,25 @@ async def list_messages(
 @router.post("/{message_id}/retry", summary="Retry a failed message")
 async def retry_message(
     message_id: str,
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     request: Request,
     _user: CurrentUserDep,
 ) -> dict:
-    """Resend a message that failed, after the clinic has fixed the cause.
+    """Resend a message that failed, after the business has fixed the cause.
 
     Most failures are a template still awaiting Meta approval or a number that
     is not on WhatsApp. Both are fixable, and neither should require rebooking
     the appointment.
     """
     message = await scoped_get(
-        db, WhatsAppMessage, message_id, clinic_id, resource_name="Message"
+        db, WhatsAppMessage, message_id, business_id, resource_name="Message"
     )
 
     if message.status not in (MessageStatus.FAILED, MessageStatus.PENDING):
         raise ConflictError(f"This message is already {message.status.value}.")
 
-    clinic = (await db.execute(select(Clinic).where(Clinic.id == clinic_id))).scalar_one()
+    business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
 
     # Reset the attempt counter: this is a deliberate human retry, not the
     # automatic one that the send path caps at three.
@@ -110,13 +110,13 @@ async def retry_message(
     message.status = MessageStatus.PENDING
     message.scheduled_for = datetime.now(timezone.utc)
 
-    sent = await whatsapp.send_message(db, message, clinic)
+    sent = await whatsapp.send_message(db, message, business)
 
     await write_audit_log(
         db,
         request,
         action="message.retried",
-        clinic_id=clinic_id,
+        business_id=business_id,
         resource_type="whatsapp_message",
         resource_id=message.id,
         metadata={"succeeded": sent},

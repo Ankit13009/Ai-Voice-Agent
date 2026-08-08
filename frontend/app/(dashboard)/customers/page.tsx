@@ -2,10 +2,11 @@
 
 import { useMemo, useState } from "react";
 
-import { patientApi } from "@/lib/api/endpoints";
+import { customerApi } from "@/lib/api/endpoints";
 import { useApiList, useApiQuery } from "@/lib/useApi";
+import { useLabels } from "@/lib/labels";
 import { formatDate, formatPhone } from "@/lib/format";
-import type { Patient } from "@/types/api";
+import type { Customer } from "@/types/api";
 import {
   Alert,
   AppointmentStatusBadge,
@@ -21,25 +22,26 @@ import {
   type Column,
 } from "@/components/ui";
 
-export default function PatientsPage() {
+export default function CustomersPage() {
+  const { title, lower } = useLabels();
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const list = useApiList<Patient>(
+  const list = useApiList<Customer>(
     (page, signal) =>
-      patientApi.list({ page, page_size: 20, search: search.trim() || undefined }, signal),
+      customerApi.list({ page, page_size: 20, search: search.trim() || undefined }, signal),
     search,
   );
 
-  const columns = useMemo<Array<Column<Patient>>>(
+  const columns = useMemo<Array<Column<Customer>>>(
     () => [
       {
-        key: "patient",
-        header: "Patient",
-        render: (patient) => (
+        key: "customer",
+        header: title("customer_singular"),
+        render: (customer) => (
           <CellStack
-            primary={patient.name || "Unnamed"}
-            secondary={formatPhone(patient.phone)}
+            primary={customer.name || "Unnamed"}
+            secondary={formatPhone(customer.phone)}
           />
         ),
       },
@@ -47,28 +49,28 @@ export default function PatientsPage() {
         key: "language",
         header: "Language",
         hideOnMobile: true,
-        render: (patient) => <LanguageBadge language={patient.preferred_language} />,
+        render: (customer) => <LanguageBadge language={customer.preferred_language} />,
       },
       {
         key: "created",
         header: "First seen",
         hideOnMobile: true,
         align: "right",
-        render: (patient) => (
+        render: (customer) => (
           <span className="text-sm text-ink-muted tnum">
-            {formatDate(patient.created_at)}
+            {formatDate(customer.created_at)}
           </span>
         ),
       },
     ],
-    [],
+    [title],
   );
 
   return (
     <>
       <PageHeader
-        title="Patients"
-        description="Everyone who has called or been booked in. Created automatically from calls."
+        title={title("customer_plural")}
+        description={`Everyone who has called or been booked in. A ${lower("customer_singular")} record is created automatically from the first call.`}
       />
 
       <Card>
@@ -78,7 +80,7 @@ export default function PatientsPage() {
             placeholder="Search by name or phone"
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            aria-label="Search patients"
+            aria-label="Search customers"
           />
         </div>
 
@@ -91,16 +93,16 @@ export default function PatientsPage() {
         <Table
           columns={columns}
           rows={list.items}
-          rowKey={(patient) => patient.id}
+          rowKey={(customer) => customer.id}
           loading={list.loading}
-          onRowClick={(patient) => setSelectedId(patient.id)}
+          onRowClick={(customer) => setSelectedId(customer.id)}
           empty={
             <EmptyState
-              title="No patients yet"
+              title={`No ${lower("customer_plural")} yet`}
               description={
                 search
-                  ? "No patients match that search."
-                  : "A patient record is created the first time someone calls or is booked in."
+                  ? "No customers match that search."
+                  : "A customer record is created the first time someone calls or is booked in."
               }
             />
           }
@@ -109,37 +111,37 @@ export default function PatientsPage() {
         {list.meta && <Pagination meta={list.meta} onPageChange={list.setPage} />}
       </Card>
 
-      <PatientDetailModal patientId={selectedId} onClose={() => setSelectedId(null)} />
+      <CustomerDetailModal customerId={selectedId} onClose={() => setSelectedId(null)} />
     </>
   );
 }
 
-function PatientDetailModal({
-  patientId,
+function CustomerDetailModal({
+  customerId,
   onClose,
 }: {
-  patientId: string | null;
+  customerId: string | null;
   onClose: () => void;
 }) {
   const detail = useApiQuery(
-    (signal) => (patientId ? patientApi.get(patientId, signal) : Promise.resolve(null)),
-    [patientId],
+    (signal) => (customerId ? customerApi.get(customerId, signal) : Promise.resolve(null)),
+    [customerId],
   );
 
-  const patient = detail.data;
+  const customer = detail.data;
 
   return (
     <Modal
-      open={Boolean(patientId)}
+      open={Boolean(customerId)}
       onClose={onClose}
-      title={patient?.name || "Patient"}
-      description={patient ? formatPhone(patient.phone) : undefined}
+      title={customer?.name || "Customer"}
+      description={customer ? formatPhone(customer.phone) : undefined}
       size="lg"
     >
       {detail.loading && <p className="text-sm text-ink-subtle">Loading…</p>}
       {detail.error && <Alert tone="danger">{detail.error.message}</Alert>}
 
-      {patient && (
+      {customer && (
         <div className="flex flex-col gap-5">
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <div>
@@ -147,7 +149,7 @@ function PatientDetailModal({
                 Total appointments
               </dt>
               <dd className="text-sm text-ink mt-0.5 tnum">
-                {patient.total_appointments}
+                {customer.total_appointments}
               </dd>
             </div>
             <div>
@@ -155,17 +157,17 @@ function PatientDetailModal({
                 Upcoming
               </dt>
               <dd className="text-sm text-ink mt-0.5 tnum">
-                {patient.upcoming_appointments}
+                {customer.upcoming_appointments}
               </dd>
             </div>
           </dl>
 
-          {patient.notes && (
+          {customer.notes && (
             <section>
               <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-subtle mb-1.5">
                 Notes
               </h3>
-              <p className="text-sm text-ink-muted">{patient.notes}</p>
+              <p className="text-sm text-ink-muted">{customer.notes}</p>
             </section>
           )}
 
@@ -173,11 +175,11 @@ function PatientDetailModal({
             <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-subtle mb-2">
               Appointment history
             </h3>
-            {patient.appointments.length === 0 ? (
+            {customer.appointments.length === 0 ? (
               <p className="text-sm text-ink-subtle">No appointments yet.</p>
             ) : (
               <ul className="flex flex-col divide-y divide-line border border-line rounded-lg overflow-hidden">
-                {patient.appointments.map((appointment) => (
+                {customer.appointments.map((appointment) => (
                   <li
                     key={appointment.id}
                     className="flex items-center justify-between gap-3 px-4 py-2.5"

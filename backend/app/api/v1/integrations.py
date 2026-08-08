@@ -1,8 +1,8 @@
 """Google Calendar connect/disconnect (OAuth 2.0 authorization code flow).
 
 CSRF protection: the `state` parameter is a short-lived signed JWT carrying the
-clinic id, not a raw id. Without a signature, anyone could hit the callback with
-`state=<victim clinic id>` and bind their own Google account to that clinic's
+business id, not a raw id. Without a signature, anyone could hit the callback with
+`state=<victim business id>` and bind their own Google account to that business's
 calendar.
 
 The callback is opened by Google in the owner's browser, so it cannot carry an
@@ -21,14 +21,14 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.core.deps import (
-    ActiveClinic,
+    ActiveBusiness,
     DbSession,
     RequireOwner,
     write_audit_log,
 )
 from app.core.errors import BadRequestError, NotFoundError
 from app.core.response import ok
-from app.db.models import CalendarCredential, Clinic
+from app.db.models import CalendarCredential, Business
 from app.services import google_calendar as gcal
 
 logger = logging.getLogger(__name__)
@@ -38,12 +38,12 @@ router = APIRouter(prefix="/integrations", tags=["integrations"])
 OAUTH_STATE_TTL = timedelta(minutes=10)
 
 
-def _issue_state(clinic_id: str, user_id: str) -> str:
+def _issue_state(business_id: str, user_id: str) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     return jwt.encode(
         {
-            "clinic_id": clinic_id,
+            "business_id": business_id,
             "user_id": user_id,
             "purpose": "google_oauth",
             "iat": int(now.timestamp()),
@@ -68,12 +68,12 @@ def _read_state(state: str) -> dict:
 
 
 @router.get("/google/authorize", summary="Start connecting Google Calendar")
-async def google_authorize(clinic_id: ActiveClinic, owner: RequireOwner) -> dict:
+async def google_authorize(business_id: ActiveBusiness, owner: RequireOwner) -> dict:
     """Return the URL the owner should open to grant calendar access."""
-    state = _issue_state(clinic_id, owner.id)
+    state = _issue_state(business_id, owner.id)
     return ok(
-        {"authorization_url": gcal.build_authorization_url(clinic_id, state)},
-        message="Open this URL to connect the clinic's Google Calendar.",
+        {"authorization_url": gcal.build_authorization_url(business_id, state)},
+        message="Open this URL to connect the business's Google Calendar.",
     )
 
 
@@ -105,30 +105,30 @@ async def google_callback(
     except BadRequestError:
         return RedirectResponse(f"{done_url}invalid", status_code=302)
 
-    clinic_id = payload["clinic_id"]
-    clinic = (await db.execute(select(Clinic).where(Clinic.id == clinic_id))).scalar_one_or_none()
-    if clinic is None:
+    business_id = payload["business_id"]
+    business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one_or_none()
+    if business is None:
         return RedirectResponse(f"{done_url}invalid", status_code=302)
 
     try:
         tokens = await gcal.exchange_code_for_tokens(code)
         email = await gcal.fetch_google_email(tokens.get("access_token", ""))
-        await gcal.save_credentials(db, clinic_id, tokens, email)
+        await gcal.save_credentials(db, business_id, tokens, email)
         await db.commit()
     except Exception:  # noqa: BLE001
         await db.rollback()
-        logger.exception("Google Calendar connection failed for clinic %s", clinic_id)
+        logger.exception("Google Calendar connection failed for business %s", business_id)
         return RedirectResponse(f"{done_url}failed", status_code=302)
 
-    logger.info("Connected Google Calendar (%s) for clinic %s", email, clinic_id)
+    logger.info("Connected Google Calendar (%s) for business %s", email, business_id)
     return RedirectResponse(f"{done_url}connected", status_code=302)
 
 
 @router.get("/google/status", summary="Google Calendar connection status")
-async def google_status(clinic_id: ActiveClinic, db: DbSession, _owner: RequireOwner) -> dict:
+async def google_status(business_id: ActiveBusiness, db: DbSession, _owner: RequireOwner) -> dict:
     credential = (
         await db.execute(
-            select(CalendarCredential).where(CalendarCredential.clinic_id == clinic_id)
+            select(CalendarCredential).where(CalendarCredential.business_id == business_id)
         )
     ).scalar_one_or_none()
 
@@ -147,17 +147,17 @@ async def google_status(clinic_id: ActiveClinic, db: DbSession, _owner: RequireO
 
 @router.delete("/google", summary="Disconnect Google Calendar")
 async def google_disconnect(
-    clinic_id: ActiveClinic, db: DbSession, request: Request, _owner: RequireOwner
+    business_id: ActiveBusiness, db: DbSession, request: Request, _owner: RequireOwner
 ) -> dict:
     """Delete the stored credentials.
 
     The row is removed rather than flagged, so the encrypted refresh token stops
     existing at all. Existing calendar events are left in place: they are the
-    clinic's own data.
+    business's own data.
     """
     credential = (
         await db.execute(
-            select(CalendarCredential).where(CalendarCredential.clinic_id == clinic_id)
+            select(CalendarCredential).where(CalendarCredential.business_id == business_id)
         )
     ).scalar_one_or_none()
     if credential is None:
@@ -168,7 +168,7 @@ async def google_disconnect(
         db,
         request,
         action="integration.google_disconnected",
-        clinic_id=clinic_id,
+        business_id=business_id,
         resource_type="calendar_credential",
     )
     await db.commit()

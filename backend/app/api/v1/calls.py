@@ -1,6 +1,6 @@
 """Call log endpoints.
 
-The list response deliberately omits `transcript`. A clinic's call log page
+The list response deliberately omits `transcript`. A business's call log page
 shows 20 rows, and full transcripts would turn a routine page load into
 megabytes of text. The detail endpoint carries it.
 """
@@ -12,7 +12,7 @@ from fastapi import APIRouter, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.core.deps import ActiveClinic, CurrentUserDep, DbSession, Paging, scoped_get
+from app.core.deps import ActiveBusiness, CurrentUserDep, DbSession, Paging, scoped_get
 from app.core.response import ok, paginated
 from app.db.models import Appointment, Call, CallOutcome
 
@@ -34,9 +34,9 @@ def _base_dict(call: Call) -> dict:
         "summary": call.summary,
         "recording_url": call.recording_url,
         "ended_reason": call.ended_reason,
-        "patient": (
-            {"id": call.patient.id, "name": call.patient.name, "phone": call.patient.phone}
-            if call.patient
+        "customer": (
+            {"id": call.customer.id, "name": call.customer.name, "phone": call.customer.phone}
+            if call.customer
             else None
         ),
         "created_at": call.created_at.isoformat(),
@@ -45,14 +45,14 @@ def _base_dict(call: Call) -> dict:
 
 @router.get("", summary="List calls")
 async def list_calls(
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     paging: Paging,
     _user: CurrentUserDep,
     outcome: Annotated[CallOutcome | None, Query()] = None,
     search: Annotated[str | None, Query(max_length=120, description="Caller number.")] = None,
 ) -> dict:
-    filters = [Call.clinic_id == clinic_id]
+    filters = [Call.business_id == business_id]
     if outcome:
         filters.append(Call.outcome == outcome)
     if search:
@@ -63,7 +63,7 @@ async def list_calls(
 
     rows = (
         await db.execute(
-            base.options(selectinload(Call.patient))
+            base.options(selectinload(Call.customer))
             .order_by(Call.created_at.desc())
             .offset(paging.offset)
             .limit(paging.page_size)
@@ -77,7 +77,7 @@ async def list_calls(
         links = (
             await db.execute(
                 select(Appointment.call_id, Appointment.id).where(
-                    Appointment.clinic_id == clinic_id, Appointment.call_id.in_(call_ids)
+                    Appointment.business_id == business_id, Appointment.call_id.in_(call_ids)
                 )
             )
         ).all()
@@ -93,15 +93,15 @@ async def list_calls(
 
 @router.get("/{call_id}", summary="One call, with the full transcript")
 async def get_call(
-    call_id: str, clinic_id: ActiveClinic, db: DbSession, _user: CurrentUserDep
+    call_id: str, business_id: ActiveBusiness, db: DbSession, _user: CurrentUserDep
 ) -> dict:
-    call = await scoped_get(db, Call, call_id, clinic_id, resource_name="Call")
-    await db.refresh(call, ["patient"])
+    call = await scoped_get(db, Call, call_id, business_id, resource_name="Call")
+    await db.refresh(call, ["customer"])
 
     appointment_id = (
         await db.execute(
             select(Appointment.id).where(
-                Appointment.clinic_id == clinic_id, Appointment.call_id == call.id
+                Appointment.business_id == business_id, Appointment.call_id == call.id
             )
         )
     ).scalar_one_or_none()

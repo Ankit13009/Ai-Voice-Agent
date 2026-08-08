@@ -60,8 +60,8 @@ export default function CallsPage() {
         header: "Caller",
         render: (call) => (
           <CellStack
-            primary={call.patient?.name || formatPhone(call.caller_number)}
-            secondary={call.patient ? formatPhone(call.caller_number) : undefined}
+            primary={call.customer?.name || formatPhone(call.caller_number)}
+            secondary={call.customer ? formatPhone(call.caller_number) : undefined}
           />
         ),
       },
@@ -190,7 +190,7 @@ function CallDetailModal({
         <div className="flex flex-col gap-5">
           <dl className="grid grid-cols-2 gap-4 text-sm">
             <Detail label="Caller" value={formatPhone(call.caller_number)} />
-            <Detail label="Patient" value={call.patient?.name || "Not identified"} />
+            <Detail label="Customer" value={call.customer?.name || "Not identified"} />
             <Detail label="Length" value={formatDuration(call.duration_seconds)} />
             <Detail label="Cost" value={formatPaise(call.cost_paise)} />
           </dl>

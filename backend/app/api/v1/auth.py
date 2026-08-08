@@ -51,7 +51,7 @@ def _user_dict(user: User) -> dict:
         "email": user.email,
         "full_name": user.full_name,
         "role": user.role.value,
-        "clinic_id": user.clinic_id,
+        "business_id": user.business_id,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
     }
 
@@ -59,10 +59,10 @@ def _user_dict(user: User) -> dict:
 async def _issue_tokens(db, user: User) -> dict:
     settings = get_settings()
     access = create_token(
-        user_id=user.id, clinic_id=user.clinic_id, role=user.role.value, token_type="access"
+        user_id=user.id, business_id=user.business_id, role=user.role.value, token_type="access"
     )
     refresh = create_token(
-        user_id=user.id, clinic_id=user.clinic_id, role=user.role.value, token_type="refresh"
+        user_id=user.id, business_id=user.business_id, role=user.role.value, token_type="refresh"
     )
 
     payload = decode_token(refresh, expected_type="refresh")
@@ -110,7 +110,7 @@ async def login(payload: LoginRequest, request: Request, db: DbSession) -> dict:
     tokens = await _issue_tokens(db, user)
 
     await write_audit_log(
-        db, request, action="auth.login", clinic_id=user.clinic_id, resource_type="user", resource_id=user.id
+        db, request, action="auth.login", business_id=user.business_id, resource_type="user", resource_id=user.id
     )
     await db.commit()
 
@@ -176,7 +176,7 @@ async def logout(payload: RefreshRequest, request: Request, user: CurrentUserDep
         )
         .values(revoked_at=datetime.now(timezone.utc))
     )
-    await write_audit_log(db, request, action="auth.logout", clinic_id=user.clinic_id)
+    await write_audit_log(db, request, action="auth.logout", business_id=user.business_id)
     await db.commit()
     return ok(None, message="Signed out.")
 
@@ -208,7 +208,7 @@ async def change_password(
     )
 
     await write_audit_log(
-        db, request, action="auth.password_changed", clinic_id=row.clinic_id, resource_type="user", resource_id=row.id
+        db, request, action="auth.password_changed", business_id=row.business_id, resource_type="user", resource_id=row.id
     )
     await db.commit()
 

@@ -11,22 +11,22 @@ from app.api.v1 import (
     appointments,
     auth,
     calls,
-    clinics,
+    businesses,
     dashboard,
     integrations,
     messages,
     onboarding,
-    patients,
+    customers,
 )
 
 api_router = APIRouter(prefix="/api/v1")
 
 api_router.include_router(auth.router)
 api_router.include_router(dashboard.router)
-api_router.include_router(clinics.router)
+api_router.include_router(businesses.router)
 api_router.include_router(appointments.router)
 api_router.include_router(calls.router)
-api_router.include_router(patients.router)
+api_router.include_router(customers.router)
 api_router.include_router(messages.router)
 api_router.include_router(integrations.router)
 api_router.include_router(onboarding.router)

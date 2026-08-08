@@ -28,7 +28,7 @@ class UserOut(BaseModel):
     email: str
     full_name: str
     role: UserRole
-    clinic_id: str | None
+    business_id: str | None
     last_login_at: datetime | None = None
 
 

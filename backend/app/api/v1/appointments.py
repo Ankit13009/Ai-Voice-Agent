@@ -1,8 +1,8 @@
 """Appointment endpoints: availability, list, create, reschedule, cancel.
 
-Every query filters on `clinic` (from `ActiveClinic`, which is derived from the
+Every query filters on `business` (from `ActiveBusiness`, which is derived from the
 JWT). Single-appointment reads go through `scoped_get`, so an id belonging to
-another clinic is a 404 rather than a leak.
+another business is a 404 rather than a leak.
 """
 
 import logging
@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
 from app.core.deps import (
-    ActiveClinic,
+    ActiveBusiness,
     CurrentUserDep,
     DbSession,
     Paging,
@@ -26,9 +26,9 @@ from app.core.response import ok, paginated
 from app.db.models import (
     Appointment,
     AppointmentStatus,
-    Clinic,
-    Doctor,
-    Patient,
+    Business,
+    StaffMember,
+    Customer,
 )
 from app.schemas.appointment import (
     AppointmentCancel,
@@ -43,34 +43,34 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/appointments", tags=["appointments"])
 
 
-async def _load_clinic(db, clinic_id: str) -> Clinic:
-    return (await db.execute(select(Clinic).where(Clinic.id == clinic_id))).scalar_one()
+async def _load_business(db, business_id: str) -> Business:
+    return (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
 
 
-def _serialize(appointment: Appointment, clinic: Clinic) -> dict:
-    patient = appointment.patient
-    doctor = appointment.doctor
+def _serialize(appointment: Appointment, business: Business) -> dict:
+    customer = appointment.customer
+    staff_member = appointment.staff_member
     return {
         "id": appointment.id,
         "status": appointment.status.value,
         "starts_at": appointment.starts_at.isoformat(),
         "ends_at": appointment.ends_at.isoformat(),
-        # Pre-rendered in the clinic's timezone so the browser never has to guess.
+        # Pre-rendered in the business's timezone so the browser never has to guess.
         "starts_at_local": appointment.starts_at.astimezone(
-            ZoneInfo(clinic.timezone)
+            ZoneInfo(business.timezone)
         ).strftime("%d %b %Y, %-I:%M %p"),
         "reason": appointment.reason,
         "notes": appointment.notes,
         "cancellation_reason": appointment.cancellation_reason,
-        "patient": {
-            "id": patient.id,
-            "name": patient.name,
-            "phone": patient.phone,
+        "customer": {
+            "id": customer.id,
+            "name": customer.name,
+            "phone": customer.phone,
         }
-        if patient
+        if customer
         else {"id": "", "name": "", "phone": ""},
-        "doctor_id": appointment.doctor_id,
-        "doctor_name": doctor.name if doctor else "",
+        "staff_member_id": appointment.staff_member_id,
+        "staff_member_name": staff_member.name if staff_member else "",
         "call_id": appointment.call_id,
         "google_event_id": appointment.google_event_id,
         "synced_to_calendar": bool(appointment.google_event_id),
@@ -79,19 +79,19 @@ def _serialize(appointment: Appointment, clinic: Clinic) -> dict:
     }
 
 
-@router.get("/availability", summary="Open slots on the clinic calendar")
+@router.get("/availability", summary="Open slots on the business calendar")
 async def availability(
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     _user: CurrentUserDep,
     date_from: Annotated[datetime | None, Query(description="ISO-8601 with offset.")] = None,
     date_to: Annotated[datetime | None, Query(description="ISO-8601 with offset.")] = None,
-    doctor_id: Annotated[str | None, Query()] = None,
+    staff_member_id: Annotated[str | None, Query()] = None,
     duration_minutes: Annotated[int | None, Query(ge=5, le=240)] = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> dict:
     """Live availability, computed from Google Calendar's busy windows."""
-    clinic = await _load_clinic(db, clinic_id)
+    business = await _load_business(db, business_id)
     now = datetime.now(timezone.utc)
     start = date_from or now
     end = date_to or (start + timedelta(days=14))
@@ -105,16 +105,16 @@ async def availability(
 
         raise BadRequestError("Availability can be queried for at most 60 days at a time.")
 
-    doctor = None
-    if doctor_id:
-        doctor = await scoped_get(db, Doctor, doctor_id, clinic_id, resource_name="Doctor")
+    staff_member = None
+    if staff_member_id:
+        staff_member = await scoped_get(db, StaffMember, staff_member_id, business_id, resource_name="StaffMember")
 
     slots = await gcal.find_available_slots(
         db,
-        clinic,
+        business,
         start=start,
         end=end,
-        doctor=doctor,
+        staff_member=staff_member,
         duration_minutes=duration_minutes,
         limit=limit,
     )
@@ -123,9 +123,9 @@ async def availability(
             {
                 "starts_at": s.starts_at.isoformat(),
                 "ends_at": s.ends_at.isoformat(),
-                "label": s.label(clinic.timezone),
-                "doctor_id": s.doctor_id,
-                "doctor_name": s.doctor_name,
+                "label": s.label(business.timezone),
+                "staff_member_id": s.staff_member_id,
+                "staff_member_name": s.staff_member_name,
             }
             for s in slots
         ]
@@ -134,23 +134,23 @@ async def availability(
 
 @router.get("", summary="List appointments")
 async def list_appointments(
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     paging: Paging,
     _user: CurrentUserDep,
     status: Annotated[AppointmentStatus | None, Query()] = None,
-    doctor_id: Annotated[str | None, Query()] = None,
+    staff_member_id: Annotated[str | None, Query()] = None,
     date_from: Annotated[datetime | None, Query()] = None,
     date_to: Annotated[datetime | None, Query()] = None,
-    search: Annotated[str | None, Query(max_length=120, description="Patient name or phone.")] = None,
+    search: Annotated[str | None, Query(max_length=120, description="Customer name or phone.")] = None,
 ) -> dict:
-    clinic = await _load_clinic(db, clinic_id)
+    business = await _load_business(db, business_id)
 
-    filters = [Appointment.clinic_id == clinic_id]
+    filters = [Appointment.business_id == business_id]
     if status:
         filters.append(Appointment.status == status)
-    if doctor_id:
-        filters.append(Appointment.doctor_id == doctor_id)
+    if staff_member_id:
+        filters.append(Appointment.staff_member_id == staff_member_id)
     if date_from:
         filters.append(Appointment.starts_at >= date_from)
     if date_to:
@@ -159,8 +159,8 @@ async def list_appointments(
     base = select(Appointment).where(*filters)
     if search:
         term = f"%{search.strip()}%"
-        base = base.join(Patient, Appointment.patient_id == Patient.id).where(
-            Patient.name.ilike(term) | Patient.phone.ilike(term)
+        base = base.join(Customer, Appointment.customer_id == Customer.id).where(
+            Customer.name.ilike(term) | Customer.phone.ilike(term)
         )
 
     total = (
@@ -169,7 +169,7 @@ async def list_appointments(
 
     rows = (
         await db.execute(
-            base.options(selectinload(Appointment.patient), selectinload(Appointment.doctor))
+            base.options(selectinload(Appointment.customer), selectinload(Appointment.staff_member))
             .order_by(Appointment.starts_at.desc())
             .offset(paging.offset)
             .limit(paging.page_size)
@@ -177,7 +177,7 @@ async def list_appointments(
     ).scalars().all()
 
     return paginated(
-        [_serialize(a, clinic) for a in rows],
+        [_serialize(a, business) for a in rows],
         page=paging.page,
         page_size=paging.page_size,
         total=total,
@@ -186,34 +186,34 @@ async def list_appointments(
 
 @router.get("/{appointment_id}", summary="One appointment")
 async def get_appointment(
-    appointment_id: str, clinic_id: ActiveClinic, db: DbSession, _user: CurrentUserDep
+    appointment_id: str, business_id: ActiveBusiness, db: DbSession, _user: CurrentUserDep
 ) -> dict:
-    clinic = await _load_clinic(db, clinic_id)
+    business = await _load_business(db, business_id)
     appointment = await scoped_get(
-        db, Appointment, appointment_id, clinic_id, resource_name="Appointment"
+        db, Appointment, appointment_id, business_id, resource_name="Appointment"
     )
-    await db.refresh(appointment, ["patient", "doctor"])
-    return ok(_serialize(appointment, clinic))
+    await db.refresh(appointment, ["customer", "staff_member"])
+    return ok(_serialize(appointment, business))
 
 
 @router.post("", status_code=201, summary="Book an appointment from the dashboard")
 async def create_appointment(
     payload: AppointmentCreate,
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     request: Request,
     _user: CurrentUserDep,
 ) -> dict:
     """Same code path the voice agent uses, so both produce identical results."""
-    clinic = await _load_clinic(db, clinic_id)
+    business = await _load_business(db, business_id)
 
     appointment = await appointment_service.book_appointment(
         db,
-        clinic,
-        patient_name=payload.patient_name,
-        patient_phone=payload.patient_phone,
+        business,
+        customer_name=payload.customer_name,
+        customer_phone=payload.customer_phone,
         starts_at=payload.starts_at,
-        doctor_id=payload.doctor_id,
+        staff_member_id=payload.staff_member_id,
         appointment_type_id=payload.appointment_type_id,
         duration_minutes=payload.duration_minutes,
         reason=payload.reason,
@@ -225,16 +225,16 @@ async def create_appointment(
         db,
         request,
         action="appointment.created",
-        clinic_id=clinic_id,
+        business_id=business_id,
         resource_type="appointment",
         resource_id=appointment.id,
         metadata={"starts_at": appointment.starts_at.isoformat()},
     )
     await db.commit()
-    await db.refresh(appointment, ["patient", "doctor"])
+    await db.refresh(appointment, ["customer", "staff_member"])
 
     return ok(
-        _serialize(appointment, clinic),
+        _serialize(appointment, business),
         message="Appointment booked and added to the calendar.",
     )
 
@@ -243,23 +243,23 @@ async def create_appointment(
 async def reschedule(
     appointment_id: str,
     payload: AppointmentReschedule,
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     request: Request,
     _user: CurrentUserDep,
 ) -> dict:
-    clinic = await _load_clinic(db, clinic_id)
+    business = await _load_business(db, business_id)
     appointment = await scoped_get(
-        db, Appointment, appointment_id, clinic_id, resource_name="Appointment"
+        db, Appointment, appointment_id, business_id, resource_name="Appointment"
     )
     previous = appointment.starts_at
 
     updated = await appointment_service.reschedule_appointment(
         db,
-        clinic,
+        business,
         appointment,
         starts_at=payload.starts_at,
-        doctor_id=payload.doctor_id,
+        staff_member_id=payload.staff_member_id,
         reason=payload.reason,
     )
 
@@ -267,48 +267,48 @@ async def reschedule(
         db,
         request,
         action="appointment.rescheduled",
-        clinic_id=clinic_id,
+        business_id=business_id,
         resource_type="appointment",
         resource_id=updated.id,
         metadata={"from": previous.isoformat(), "to": updated.starts_at.isoformat()},
     )
     await db.commit()
-    await db.refresh(updated, ["patient", "doctor"])
+    await db.refresh(updated, ["customer", "staff_member"])
 
-    return ok(_serialize(updated, clinic), message="Appointment rescheduled.")
+    return ok(_serialize(updated, business), message="Appointment rescheduled.")
 
 
 @router.patch("/{appointment_id}/cancel", summary="Cancel an appointment")
 async def cancel(
     appointment_id: str,
     payload: AppointmentCancel,
-    clinic_id: ActiveClinic,
+    business_id: ActiveBusiness,
     db: DbSession,
     request: Request,
     _user: CurrentUserDep,
 ) -> dict:
-    clinic = await _load_clinic(db, clinic_id)
+    business = await _load_business(db, business_id)
     appointment = await scoped_get(
-        db, Appointment, appointment_id, clinic_id, resource_name="Appointment"
+        db, Appointment, appointment_id, business_id, resource_name="Appointment"
     )
 
     updated = await appointment_service.cancel_appointment(
-        db, clinic, appointment, reason=payload.reason, notify_patient=payload.notify_patient
+        db, business, appointment, reason=payload.reason, notify_customer=payload.notify_customer
     )
 
     await write_audit_log(
         db,
         request,
         action="appointment.cancelled",
-        clinic_id=clinic_id,
+        business_id=business_id,
         resource_type="appointment",
         resource_id=updated.id,
         metadata={"reason": payload.reason},
     )
     await db.commit()
-    await db.refresh(updated, ["patient", "doctor"])
+    await db.refresh(updated, ["customer", "staff_member"])
 
     return ok(
-        _serialize(updated, clinic),
+        _serialize(updated, business),
         message="Appointment cancelled and removed from the calendar.",
     )

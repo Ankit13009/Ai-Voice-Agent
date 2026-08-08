@@ -7,7 +7,7 @@ pending reminders survive a restart, a deploy, or a crash, which an in-memory
 `asyncio.sleep(24h)` would not.
 
 Concurrency: a `SELECT ... FOR UPDATE SKIP LOCKED` claim marks rows before
-sending, so running two API instances does not double-text patients. SQLite has
+sending, so running two API instances does not double-text customers. SQLite has
 no such locking, and degrades to a plain select, which is fine because local
 development runs a single process.
 """
@@ -20,7 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
-from app.db.models import Clinic, MessageStatus, WhatsAppMessage
+from app.db.models import Business, MessageStatus, WhatsAppMessage
 from app.db.session import SessionLocal, engine
 from app.services import whatsapp
 
@@ -63,12 +63,12 @@ async def process_due_messages() -> int:
                 await db.commit()
                 return 0
 
-            # Load each clinic once rather than per message.
-            clinic_ids = {m.clinic_id for m in messages}
-            clinics = {
+            # Load each business once rather than per message.
+            clinic_ids = {m.business_id for m in messages}
+            businesses = {
                 c.id: c
                 for c in (
-                    await db.execute(select(Clinic).where(Clinic.id.in_(clinic_ids)))
+                    await db.execute(select(Business).where(Business.id.in_(clinic_ids)))
                 ).scalars()
             }
 
@@ -82,13 +82,13 @@ async def process_due_messages() -> int:
                     )
                     continue
 
-                clinic = clinics.get(message.clinic_id)
-                if clinic is None or not clinic.is_active:
+                business = businesses.get(message.business_id)
+                if business is None or not business.is_active:
                     message.status = MessageStatus.CANCELLED
-                    message.last_error = "Clinic is inactive."
+                    message.last_error = "Business is inactive."
                     continue
 
-                if await whatsapp.send_message(db, message, clinic):
+                if await whatsapp.send_message(db, message, business):
                     sent += 1
 
             await db.commit()
@@ -107,7 +107,7 @@ async def reminder_loop(stop_event: asyncio.Event) -> None:
 
     Never dies: a failure in one batch is logged and the loop continues, because
     a scheduler that exits on the first transient network error silently stops
-    every clinic's reminders.
+    every business's reminders.
     """
     settings = get_settings()
     interval = max(30, settings.reminder_poll_seconds)

@@ -18,12 +18,13 @@ import type {
   CallDetail,
   CallListQuery,
   ChangePasswordRequest,
-  Clinic,
-  ClinicUpdateRequest,
+  Business,
+  BusinessTypePreset,
+  BusinessUpdateRequest,
   DashboardStats,
-  Doctor,
-  DoctorCreateRequest,
-  DoctorUpdateRequest,
+  StaffMember,
+  StaffMemberCreateRequest,
+  StaffMemberUpdateRequest,
   GoogleAuthorizeResponse,
   GoogleCalendarStatus,
   LoginPayload,
@@ -31,10 +32,10 @@ import type {
   MessageListQuery,
   OnboardClinicRequest,
   OnboardClinicResponse,
-  Patient,
-  PatientDetail,
-  PatientListQuery,
-  PatientUpdateRequest,
+  Customer,
+  CustomerDetail,
+  CustomerListQuery,
+  CustomerUpdateRequest,
   Slot,
   User,
   WhatsAppMessage,
@@ -78,17 +79,17 @@ export const dashboardApi = {
     api.get<DashboardStats>(`${V1}/dashboard/stats`, undefined, signal),
 };
 
-export const clinicApi = {
-  me: (signal?: AbortSignal) => api.get<Clinic>(`${V1}/clinics/me`, undefined, signal),
-  update: (payload: ClinicUpdateRequest) => api.patch<Clinic>(`${V1}/clinics/me`, payload),
+export const businessApi = {
+  me: (signal?: AbortSignal) => api.get<Business>(`${V1}/businesses/me`, undefined, signal),
+  update: (payload: BusinessUpdateRequest) => api.patch<Business>(`${V1}/businesses/me`, payload),
 
   listDoctors: (signal?: AbortSignal) =>
-    api.get<Doctor[]>(`${V1}/clinics/me/doctors`, undefined, signal),
-  createDoctor: (payload: DoctorCreateRequest) =>
-    api.post<Doctor>(`${V1}/clinics/me/doctors`, payload),
-  updateDoctor: (id: string, payload: DoctorUpdateRequest) =>
-    api.patch<Doctor>(`${V1}/clinics/me/doctors/${id}`, payload),
-  deactivateDoctor: (id: string) => api.delete<null>(`${V1}/clinics/me/doctors/${id}`),
+    api.get<StaffMember[]>(`${V1}/businesses/me/staff`, undefined, signal),
+  createDoctor: (payload: StaffMemberCreateRequest) =>
+    api.post<StaffMember>(`${V1}/businesses/me/staff`, payload),
+  updateDoctor: (id: string, payload: StaffMemberUpdateRequest) =>
+    api.patch<StaffMember>(`${V1}/businesses/me/staff/${id}`, payload),
+  deactivateDoctor: (id: string) => api.delete<null>(`${V1}/businesses/me/staff/${id}`),
 };
 
 export const appointmentApi = {
@@ -118,13 +119,13 @@ export const callApi = {
     api.get<CallDetail>(`${V1}/calls/${id}`, undefined, signal),
 };
 
-export const patientApi = {
-  list: (query: PatientListQuery = {}, signal?: AbortSignal) =>
-    api.list<Patient>(`${V1}/patients`, { ...query }, signal),
+export const customerApi = {
+  list: (query: CustomerListQuery = {}, signal?: AbortSignal) =>
+    api.list<Customer>(`${V1}/customers`, { ...query }, signal),
   get: (id: string, signal?: AbortSignal) =>
-    api.get<PatientDetail>(`${V1}/patients/${id}`, undefined, signal),
-  update: (id: string, payload: PatientUpdateRequest) =>
-    api.patch<Patient>(`${V1}/patients/${id}`, payload),
+    api.get<CustomerDetail>(`${V1}/customers/${id}`, undefined, signal),
+  update: (id: string, payload: CustomerUpdateRequest) =>
+    api.patch<Customer>(`${V1}/customers/${id}`, payload),
 };
 
 export const messageApi = {
@@ -142,6 +143,9 @@ export const integrationApi = {
 };
 
 export const onboardingApi = {
+  businessTypes: (signal?: AbortSignal) =>
+    api.get<BusinessTypePreset[]>(`${V1}/onboarding/business-types`, undefined, signal),
+
   createClinic: (payload: OnboardClinicRequest) =>
-    api.post<OnboardClinicResponse>(`${V1}/onboarding/clinics`, payload),
+    api.post<OnboardClinicResponse>(`${V1}/onboarding/businesses`, payload),
 };

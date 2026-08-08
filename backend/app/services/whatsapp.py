@@ -3,7 +3,7 @@
 Cost model, which is the reason for going direct: Meta charges per *template*
 message, with no platform subscription. Appointment confirmations and reminders
 are all "utility" templates (roughly ₹0.115 each in India), and utility
-templates sent inside an open 24-hour service window are free. A clinic running
+templates sent inside an open 24-hour service window are free. A business running
 500 appointments a month pays on the order of ₹175, against a WATI plan starting
 around ₹2,500.
 
@@ -28,11 +28,11 @@ from app.config import get_settings
 from app.core.errors import IntegrationNotConfiguredError
 from app.db.models import (
     Appointment,
-    Clinic,
+    Business,
     Language,
     MessageKind,
     MessageStatus,
-    Patient,
+    Customer,
     WhatsAppMessage,
 )
 
@@ -48,7 +48,7 @@ class TemplateSpec:
     """A Meta-approved template.
 
     `body` is never sent to Meta; it exists so the dashboard can show what the
-    patient received, and so the wording submitted for approval is version
+    customer received, and so the wording submitted for approval is version
     controlled next to the code that fills it in.
     """
 
@@ -77,7 +77,7 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "Hello {{1}}, your appointment at {{2}} is confirmed for {{3}}. "
             "Reply CANCEL to cancel or call {{4}} to reschedule."
         ),
-        variable_order=("patient_name", "clinic_name", "appointment_time", "clinic_phone"),
+        variable_order=("customer_name", "business_name", "appointment_time", "business_phone"),
     ),
     (MessageKind.CONFIRMATION, "hi"): TemplateSpec(
         name="appointment_confirmation_hi",
@@ -86,7 +86,7 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "नमस्ते {{1}}, {{2}} में आपका अपॉइंटमेंट {{3}} के लिए कन्फर्म हो गया है। "
             "रद्द करने के लिए CANCEL भेजें या {{4}} पर कॉल करें।"
         ),
-        variable_order=("patient_name", "clinic_name", "appointment_time", "clinic_phone"),
+        variable_order=("customer_name", "business_name", "appointment_time", "business_phone"),
     ),
     (MessageKind.REMINDER_24H, "en"): TemplateSpec(
         name="appointment_reminder_24h_en",
@@ -95,7 +95,7 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "Reminder: {{1}}, you have an appointment at {{2}} tomorrow at {{3}}. "
             "Reply CANCEL if you cannot make it."
         ),
-        variable_order=("patient_name", "clinic_name", "appointment_time"),
+        variable_order=("customer_name", "business_name", "appointment_time"),
     ),
     (MessageKind.REMINDER_24H, "hi"): TemplateSpec(
         name="appointment_reminder_24h_hi",
@@ -104,19 +104,19 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "याद दिलाने के लिए: {{1}}, कल {{3}} बजे {{2}} में आपका अपॉइंटमेंट है। "
             "अगर नहीं आ सकते तो CANCEL भेजें।"
         ),
-        variable_order=("patient_name", "clinic_name", "appointment_time"),
+        variable_order=("customer_name", "business_name", "appointment_time"),
     ),
     (MessageKind.REMINDER_2H, "en"): TemplateSpec(
         name="appointment_reminder_2h_en",
         language_code="en",
         body="{{1}}, your appointment at {{2}} is in about 2 hours, at {{3}}. See you soon.",
-        variable_order=("patient_name", "clinic_name", "appointment_time"),
+        variable_order=("customer_name", "business_name", "appointment_time"),
     ),
     (MessageKind.REMINDER_2H, "hi"): TemplateSpec(
         name="appointment_reminder_2h_hi",
         language_code="hi",
         body="{{1}}, {{2}} में आपका अपॉइंटमेंट लगभग 2 घंटे में, {{3}} बजे है। जल्द मिलते हैं।",
-        variable_order=("patient_name", "clinic_name", "appointment_time"),
+        variable_order=("customer_name", "business_name", "appointment_time"),
     ),
     (MessageKind.CANCELLATION, "en"): TemplateSpec(
         name="appointment_cancelled_en",
@@ -125,7 +125,7 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "Hello {{1}}, your appointment at {{2}} on {{3}} has been cancelled. "
             "Call {{4}} to book a new time."
         ),
-        variable_order=("patient_name", "clinic_name", "appointment_time", "clinic_phone"),
+        variable_order=("customer_name", "business_name", "appointment_time", "business_phone"),
     ),
     (MessageKind.CANCELLATION, "hi"): TemplateSpec(
         name="appointment_cancelled_hi",
@@ -134,19 +134,19 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "नमस्ते {{1}}, {{3}} को {{2}} में आपका अपॉइंटमेंट रद्द कर दिया गया है। "
             "नया समय बुक करने के लिए {{4}} पर कॉल करें।"
         ),
-        variable_order=("patient_name", "clinic_name", "appointment_time", "clinic_phone"),
+        variable_order=("customer_name", "business_name", "appointment_time", "business_phone"),
     ),
     (MessageKind.RESCHEDULE, "en"): TemplateSpec(
         name="appointment_rescheduled_en",
         language_code="en",
         body="Hello {{1}}, your appointment at {{2}} has been moved to {{3}}. Reply CANCEL if this does not work.",
-        variable_order=("patient_name", "clinic_name", "appointment_time"),
+        variable_order=("customer_name", "business_name", "appointment_time"),
     ),
     (MessageKind.RESCHEDULE, "hi"): TemplateSpec(
         name="appointment_rescheduled_hi",
         language_code="hi",
         body="नमस्ते {{1}}, {{2}} में आपका अपॉइंटमेंट {{3}} पर बदल दिया गया है। अगर यह ठीक नहीं है तो CANCEL भेजें।",
-        variable_order=("patient_name", "clinic_name", "appointment_time"),
+        variable_order=("customer_name", "business_name", "appointment_time"),
     ),
 }
 
@@ -154,7 +154,7 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
 def resolve_template(kind: MessageKind, language: Language) -> TemplateSpec:
     """Pick the template for this message kind and language.
 
-    Hindi and mixed-language patients both get the Hindi template: someone who
+    Hindi and mixed-language customers both get the Hindi template: someone who
     conducted the call in Hindi should not receive an English-only reminder.
     """
     code = "hi" if language in (Language.HINDI, Language.MIXED) else "en"
@@ -233,14 +233,14 @@ async def _post_template(
     return False, "", reason
 
 
-def _credentials_for(clinic: Clinic) -> tuple[str, str]:
+def _credentials_for(business: Business) -> tuple[str, str]:
     settings = get_settings()
-    phone_number_id = clinic.whatsapp_phone_number_id or settings.whatsapp_phone_number_id
+    phone_number_id = business.whatsapp_phone_number_id or settings.whatsapp_phone_number_id
     access_token = settings.whatsapp_access_token
     if not (phone_number_id and access_token):
         raise IntegrationNotConfiguredError(
-            "WhatsApp is not configured for this clinic.",
-            log_context={"clinic_id": clinic.id},
+            "WhatsApp is not configured for this business.",
+            log_context={"business_id": business.id},
         )
     return phone_number_id, access_token
 
@@ -248,38 +248,38 @@ def _credentials_for(clinic: Clinic) -> tuple[str, str]:
 async def queue_message(
     db: AsyncSession,
     *,
-    clinic: Clinic,
-    patient: Patient,
+    business: Business,
+    customer: Customer,
     appointment: Appointment | None,
     kind: MessageKind,
     scheduled_for: datetime | None,
 ) -> WhatsAppMessage | None:
     """Create a pending message row. Sending happens later, via the scheduler.
 
-    Returns None when the clinic has this message kind switched off, so callers
+    Returns None when the business has this message kind switched off, so callers
     can treat "disabled" and "queued" uniformly.
     """
-    if not clinic.whatsapp_enabled:
+    if not business.whatsapp_enabled:
         return None
-    if kind == MessageKind.REMINDER_24H and not clinic.reminder_24h_enabled:
+    if kind == MessageKind.REMINDER_24H and not business.reminder_24h_enabled:
         return None
-    if kind == MessageKind.REMINDER_2H and not clinic.reminder_2h_enabled:
+    if kind == MessageKind.REMINDER_2H and not business.reminder_2h_enabled:
         return None
 
-    spec = resolve_template(kind, patient.preferred_language)
+    spec = resolve_template(kind, customer.preferred_language)
     variables = {
-        "patient_name": patient.name or "there",
-        "clinic_name": clinic.name,
+        "customer_name": customer.name or "there",
+        "business_name": business.name,
         "appointment_time": (
-            format_appointment_time(appointment.starts_at, clinic.timezone) if appointment else ""
+            format_appointment_time(appointment.starts_at, business.timezone) if appointment else ""
         ),
-        "clinic_phone": clinic.contact_phone or clinic.phone_number,
+        "business_phone": business.contact_phone or business.phone_number,
     }
 
     message = WhatsAppMessage(
-        clinic_id=clinic.id,
+        business_id=business.id,
         appointment_id=appointment.id if appointment else None,
-        to_phone=patient.phone,
+        to_phone=customer.phone,
         kind=kind,
         status=MessageStatus.PENDING,
         template_name=spec.name,
@@ -293,7 +293,7 @@ async def queue_message(
     return message
 
 
-async def send_message(db: AsyncSession, message: WhatsAppMessage, clinic: Clinic) -> bool:
+async def send_message(db: AsyncSession, message: WhatsAppMessage, business: Business) -> bool:
     """Send one queued message and record the outcome on its row."""
     spec = TEMPLATES.get((message.kind, message.language_code))
     if spec is None:
@@ -301,7 +301,7 @@ async def send_message(db: AsyncSession, message: WhatsAppMessage, clinic: Clini
 
     message.attempt_count += 1
     try:
-        phone_number_id, access_token = _credentials_for(clinic)
+        phone_number_id, access_token = _credentials_for(business)
     except IntegrationNotConfiguredError as exc:
         message.status = MessageStatus.FAILED
         message.last_error = exc.message
@@ -338,7 +338,7 @@ async def cancel_pending_messages(
 ) -> int:
     """Cancel not-yet-sent messages for an appointment.
 
-    Called on cancellation and reschedule. Without it, a patient who cancelled
+    Called on cancellation and reschedule. Without it, a customer who cancelled
     still receives "your appointment is in 2 hours", which is the single most
     damaging failure mode of an automated reminder system.
     """

@@ -1,11 +1,11 @@
-"""Meta WhatsApp webhooks: delivery receipts and inbound patient replies.
+"""Meta WhatsApp webhooks: delivery receipts and inbound customer replies.
 
 Verification uses `X-Hub-Signature-256`, an HMAC over the raw request body with
 the app secret. The raw bytes are read via `request.body()` before any parsing,
 because re-serializing the parsed JSON changes whitespace and key ordering and
 the HMAC would never match.
 
-Inbound replies matter for cost as well as UX: a patient message opens a
+Inbound replies matter for cost as well as UX: a customer message opens a
 24-hour customer service window, during which utility templates to that number
 are free.
 """
@@ -22,9 +22,9 @@ from app.core.errors import WebhookSignatureError
 from app.core.security import verify_meta_signature
 from app.db.models import (
     Appointment,
-    Clinic,
+    Business,
     MessageStatus,
-    Patient,
+    Customer,
     WhatsAppMessage,
 )
 from app.services import appointments as appointment_service
@@ -73,7 +73,7 @@ async def handle_webhook(
 
     Always returns 200 once the signature checks out. Meta retries non-2xx
     responses with backoff, and a retry storm caused by one malformed entry
-    would delay every other clinic's receipts.
+    would delay every other business's receipts.
     """
     settings = get_settings()
     raw_body = await request.body()
@@ -133,7 +133,7 @@ async def _process_statuses(db, statuses: list[dict]) -> None:
 
 
 async def _process_messages(db, value: dict) -> None:
-    """Handle inbound patient messages, currently just CANCEL."""
+    """Handle inbound customer messages, currently just CANCEL."""
     messages = value.get("messages", []) or []
     if not messages:
         return
@@ -154,13 +154,13 @@ async def _process_messages(db, value: dict) -> None:
             logger.info("Inbound WhatsApp message from %s (no action matched).", normalized)
             continue
 
-        clinic = await _resolve_clinic_for_patient(db, business_phone_id, normalized)
-        if clinic is None:
-            logger.warning("Inbound cancel from %s but no clinic matched.", normalized)
+        business = await _resolve_business_for_customer(db, business_phone_id, normalized)
+        if business is None:
+            logger.warning("Inbound cancel from %s but no business matched.", normalized)
             continue
 
-        appointment = await appointment_service.find_patient_appointment(
-            db, clinic.id, normalized
+        appointment = await appointment_service.find_customer_appointment(
+            db, business.id, normalized
         )
         if appointment is None:
             logger.info("Cancel request from %s but no upcoming appointment.", normalized)
@@ -168,41 +168,41 @@ async def _process_messages(db, value: dict) -> None:
 
         await appointment_service.cancel_appointment(
             db,
-            clinic,
+            business,
             appointment,
-            reason="Cancelled by patient over WhatsApp",
-            notify_patient=True,
+            reason="Cancelled by customer over WhatsApp",
+            notify_customer=True,
         )
         logger.info(
-            "Cancelled appointment %s for clinic %s via WhatsApp reply.",
+            "Cancelled appointment %s for business %s via WhatsApp reply.",
             appointment.id,
-            clinic.id,
+            business.id,
         )
 
 
-async def _resolve_clinic_for_patient(db, business_phone_id: str, patient_phone: str) -> Clinic | None:
-    """Work out which clinic an inbound message belongs to.
+async def _resolve_business_for_customer(db, business_phone_id: str, customer_phone: str) -> Business | None:
+    """Work out which business an inbound message belongs to.
 
-    The per-clinic WhatsApp number is the reliable signal. When clinics share the
-    platform number, fall back to the patient's most recent appointment, and
-    refuse to guess if that is ambiguous: cancelling the wrong clinic's
+    The per-business WhatsApp number is the reliable signal. When businesses share the
+    platform number, fall back to the customer's most recent appointment, and
+    refuse to guess if that is ambiguous: cancelling the wrong business's
     appointment is far worse than doing nothing.
     """
     if business_phone_id:
-        clinic = (
+        business = (
             await db.execute(
-                select(Clinic).where(Clinic.whatsapp_phone_number_id == business_phone_id)
+                select(Business).where(Business.whatsapp_phone_number_id == business_phone_id)
             )
         ).scalar_one_or_none()
-        if clinic:
-            return clinic
+        if business:
+            return business
 
     rows = (
         await db.execute(
-            select(Clinic)
-            .join(Patient, Patient.clinic_id == Clinic.id)
-            .join(Appointment, Appointment.patient_id == Patient.id)
-            .where(Patient.phone == patient_phone)
+            select(Business)
+            .join(Customer, Customer.business_id == Business.id)
+            .join(Appointment, Appointment.customer_id == Customer.id)
+            .where(Customer.phone == customer_phone)
             .order_by(Appointment.starts_at.desc())
             .limit(2)
         )
@@ -212,6 +212,6 @@ async def _resolve_clinic_for_patient(db, business_phone_id: str, patient_phone:
         return rows[0]
     if len(rows) > 1:
         logger.warning(
-            "Ambiguous inbound WhatsApp cancel from %s: matches multiple clinics.", patient_phone
+            "Ambiguous inbound WhatsApp cancel from %s: matches multiple businesses.", customer_phone
         )
     return None

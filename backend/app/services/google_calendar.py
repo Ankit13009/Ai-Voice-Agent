@@ -3,11 +3,11 @@
 Two-way sync, without a scheduling middleman:
 
 * Calendar -> us: `freebusy.query` returns everything blocking the calendar,
-  including events the clinic created by hand in Google. Those windows are
-  removed from the slots we offer, so a doctor blocking 3-4pm in their own
+  including events the business created by hand in Google. Those windows are
+  removed from the slots we offer, so a staff_member blocking 3-4pm in their own
   calendar is immediately unbookable by the phone agent.
 * us -> Calendar: `events.insert/patch/delete` write the appointment into the
-  clinic's real calendar, and we keep the returned `google_event_id` so later
+  business's real calendar, and we keep the returned `google_event_id` so later
   reschedules and cancellations act on the same event rather than orphaning it.
 
 Implemented against the REST API with httpx rather than google-api-python-client:
@@ -34,7 +34,7 @@ from app.core.errors import (
     UpstreamError,
 )
 from app.core.security import decrypt_secret, encrypt_secret
-from app.db.models import Appointment, CalendarCredential, Clinic, Doctor
+from app.db.models import Appointment, CalendarCredential, Business, StaffMember
 
 logger = logging.getLogger(__name__)
 
@@ -58,11 +58,11 @@ HTTP_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
 class Slot:
     starts_at: datetime  # UTC
     ends_at: datetime  # UTC
-    doctor_id: str | None = None
-    doctor_name: str = ""
+    staff_member_id: str | None = None
+    staff_member_name: str = ""
 
     def label(self, tz: str) -> str:
-        """Speech- and UI-friendly rendering in the clinic's timezone."""
+        """Speech- and UI-friendly rendering in the business's timezone."""
         local = self.starts_at.astimezone(ZoneInfo(tz))
         # %-I is platform-specific but correct on Linux/macOS, our deploy targets.
         return local.strftime("%A %d %b, %-I:%M %p")
@@ -71,8 +71,8 @@ class Slot:
 # --------------------------------------------------------------------------- #
 # OAuth
 # --------------------------------------------------------------------------- #
-def build_authorization_url(clinic_id: str, state: str) -> str:
-    """URL the clinic owner visits to grant calendar access.
+def build_authorization_url(business_id: str, state: str) -> str:
+    """URL the business owner visits to grant calendar access.
 
     `access_type=offline` + `prompt=consent` is what makes Google return a
     refresh token. Without `prompt=consent`, a re-authorising account gets an
@@ -82,7 +82,7 @@ def build_authorization_url(clinic_id: str, state: str) -> str:
     if not (settings.google_client_id and settings.google_oauth_redirect_uri):
         raise IntegrationNotConfiguredError(
             "Google Calendar is not configured on this server.",
-            log_context={"clinic_id": clinic_id},
+            log_context={"business_id": business_id},
         )
     params = {
         "client_id": settings.google_client_id,
@@ -131,7 +131,7 @@ async def fetch_google_email(access_token: str) -> str:
 
 
 async def save_credentials(
-    db: AsyncSession, clinic_id: str, token_payload: dict, email: str
+    db: AsyncSession, business_id: str, token_payload: dict, email: str
 ) -> CalendarCredential:
     refresh_token = token_payload.get("refresh_token", "")
     access_token = token_payload.get("access_token", "")
@@ -139,11 +139,11 @@ async def save_credentials(
 
     cred = (
         await db.execute(
-            select(CalendarCredential).where(CalendarCredential.clinic_id == clinic_id)
+            select(CalendarCredential).where(CalendarCredential.business_id == business_id)
         )
     ).scalar_one_or_none()
     if cred is None:
-        cred = CalendarCredential(clinic_id=clinic_id)
+        cred = CalendarCredential(business_id=business_id)
         db.add(cred)
 
     # Google omits refresh_token when re-consenting an already-authorised app.
@@ -160,18 +160,18 @@ async def save_credentials(
     return cred
 
 
-async def _get_access_token(db: AsyncSession, clinic_id: str) -> tuple[str, CalendarCredential]:
+async def _get_access_token(db: AsyncSession, business_id: str) -> tuple[str, CalendarCredential]:
     """Return a valid access token, refreshing it if needed."""
     cred = (
         await db.execute(
-            select(CalendarCredential).where(CalendarCredential.clinic_id == clinic_id)
+            select(CalendarCredential).where(CalendarCredential.business_id == business_id)
         )
     ).scalar_one_or_none()
 
     if cred is None or not cred.is_connected:
         raise IntegrationNotConfiguredError(
-            "This clinic has not connected a Google Calendar yet.",
-            log_context={"clinic_id": clinic_id},
+            "This business has not connected a Google Calendar yet.",
+            log_context={"business_id": business_id},
         )
 
     cached = decrypt_secret(cred.encrypted_access_token)
@@ -228,14 +228,14 @@ async def _get_access_token(db: AsyncSession, clinic_id: str) -> tuple[str, Cale
 
 async def _api_request(
     db: AsyncSession,
-    clinic_id: str,
+    business_id: str,
     method: str,
     path: str,
     *,
     json_body: dict | None = None,
     params: dict | None = None,
 ) -> dict:
-    token, _cred = await _get_access_token(db, clinic_id)
+    token, _cred = await _get_access_token(db, business_id)
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         response = await client.request(
             method,
@@ -259,7 +259,7 @@ async def _api_request(
     )
     raise UpstreamError(
         "Google Calendar",
-        log_context={"status": response.status_code, "path": path, "clinic_id": clinic_id},
+        log_context={"status": response.status_code, "path": path, "business_id": business_id},
     )
 
 
@@ -268,7 +268,7 @@ async def _api_request(
 # --------------------------------------------------------------------------- #
 async def get_busy_windows(
     db: AsyncSession,
-    clinic_id: str,
+    business_id: str,
     calendar_id: str,
     start: datetime,
     end: datetime,
@@ -283,7 +283,7 @@ async def get_busy_windows(
         "timeMax": end.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
         "items": [{"id": calendar_id}],
     }
-    data = await _api_request(db, clinic_id, "POST", "/freeBusy", json_body=payload)
+    data = await _api_request(db, business_id, "POST", "/freeBusy", json_body=payload)
     calendars = data.get("calendars", {}) or {}
     entry = calendars.get(calendar_id, {}) or {}
 
@@ -291,7 +291,7 @@ async def get_busy_windows(
         logger.error("freeBusy returned errors for %s: %s", calendar_id, entry["errors"])
         raise UpstreamError(
             "Google Calendar",
-            "Could not read the clinic calendar. Check that it is shared with the connected account.",
+            "Could not read the business calendar. Check that it is shared with the connected account.",
         )
 
     windows: list[tuple[datetime, datetime]] = []
@@ -327,7 +327,7 @@ def generate_candidate_slots(
 ) -> list[tuple[datetime, datetime]]:
     """Every in-hours slot in the range, before availability is considered.
 
-    Walks day by day in the clinic's local timezone rather than adding fixed
+    Walks day by day in the business's local timezone rather than adding fixed
     24-hour offsets in UTC, so a DST shift moves the working window with the
     wall clock instead of sliding every slot by an hour.
     """
@@ -358,18 +358,18 @@ def generate_candidate_slots(
 
 async def find_available_slots(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     *,
     start: datetime,
     end: datetime,
-    doctor: Doctor | None = None,
+    staff_member: StaffMember | None = None,
     duration_minutes: int | None = None,
     limit: int = 20,
 ) -> list[Slot]:
     """Bookable openings, honouring working hours and the live calendar."""
-    calendar_id = _calendar_id_for(clinic, doctor)
+    calendar_id = _calendar_id_for(business, staff_member)
     duration = duration_minutes or (
-        doctor.consultation_duration_minutes if doctor else clinic.slot_duration_minutes
+        staff_member.consultation_duration_minutes if staff_member else business.slot_duration_minutes
     )
 
     # Never offer a slot in the past, even if the caller asks for today.
@@ -381,19 +381,19 @@ async def find_available_slots(
     candidates = generate_candidate_slots(
         start=effective_start,
         end=end,
-        tz=clinic.timezone,
-        opens_at=(doctor.opens_at if doctor and doctor.opens_at else clinic.opens_at),
-        closes_at=(doctor.closes_at if doctor and doctor.closes_at else clinic.closes_at),
+        tz=business.timezone,
+        opens_at=(staff_member.opens_at if staff_member and staff_member.opens_at else business.opens_at),
+        closes_at=(staff_member.closes_at if staff_member and staff_member.closes_at else business.closes_at),
         working_days=(
-            doctor.working_days if doctor and doctor.working_days else clinic.working_days
+            staff_member.working_days if staff_member and staff_member.working_days else business.working_days
         ),
         duration_minutes=duration,
-        step_minutes=clinic.slot_duration_minutes,
+        step_minutes=business.slot_duration_minutes,
     )
     if not candidates:
         return []
 
-    busy = await get_busy_windows(db, clinic.id, calendar_id, effective_start, end)
+    busy = await get_busy_windows(db, business.id, calendar_id, effective_start, end)
 
     available: list[Slot] = []
     for slot_start, slot_end in candidates:
@@ -403,8 +403,8 @@ async def find_available_slots(
             Slot(
                 starts_at=slot_start,
                 ends_at=slot_end,
-                doctor_id=doctor.id if doctor else None,
-                doctor_name=doctor.name if doctor else "",
+                staff_member_id=staff_member.id if staff_member else None,
+                staff_member_name=staff_member.name if staff_member else "",
             )
         )
         if len(available) >= limit:
@@ -415,10 +415,10 @@ async def find_available_slots(
 
 async def is_slot_free(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     start: datetime,
     end: datetime,
-    doctor: Doctor | None = None,
+    staff_member: StaffMember | None = None,
 ) -> bool:
     """Re-check one specific slot immediately before writing to the calendar.
 
@@ -426,15 +426,15 @@ async def is_slot_free(
     long enough for a walk-in to take the slot, so the check is repeated at
     write time rather than trusted from the earlier availability query.
     """
-    calendar_id = _calendar_id_for(clinic, doctor)
-    busy = await get_busy_windows(db, clinic.id, calendar_id, start, end)
+    calendar_id = _calendar_id_for(business, staff_member)
+    busy = await get_busy_windows(db, business.id, calendar_id, start, end)
     return not _overlaps(start, end, busy)
 
 
-def _calendar_id_for(clinic: Clinic, doctor: Doctor | None) -> str:
-    """Per-doctor calendar when set, otherwise the clinic's connected calendar."""
-    if doctor and doctor.google_calendar_id:
-        return doctor.google_calendar_id
+def _calendar_id_for(business: Business, staff_member: StaffMember | None) -> str:
+    """Per-staff_member calendar when set, otherwise the business's connected calendar."""
+    if staff_member and staff_member.google_calendar_id:
+        return staff_member.google_calendar_id
     return "primary"
 
 
@@ -443,23 +443,23 @@ def _calendar_id_for(clinic: Clinic, doctor: Doctor | None) -> str:
 # --------------------------------------------------------------------------- #
 def _event_body(
     *,
-    clinic: Clinic,
-    patient_name: str,
-    patient_phone: str,
+    business: Business,
+    customer_name: str,
+    customer_phone: str,
     reason: str,
     start: datetime,
     end: datetime,
-    doctor_name: str = "",
+    staff_member_name: str = "",
 ) -> dict:
-    title = f"{patient_name or 'Patient'}"
-    if doctor_name:
-        title += f" with {doctor_name}"
+    title = f"{customer_name or 'Customer'}"
+    if staff_member_name:
+        title += f" with {staff_member_name}"
     description_lines = [
-        f"Patient: {patient_name or 'Not given'}",
-        f"Phone: {patient_phone or 'Not given'}",
+        f"Customer: {customer_name or 'Not given'}",
+        f"Phone: {customer_phone or 'Not given'}",
         f"Reason: {reason or 'Not given'}",
         "",
-        f"Booked by the {clinic.agent_name} AI receptionist.",
+        f"Booked by the {business.agent_name} AI receptionist.",
     ]
     return {
         "summary": title,
@@ -467,54 +467,54 @@ def _event_body(
         "start": {"dateTime": start.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
         "end": {"dateTime": end.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
         # Reminders are handled over WhatsApp, so Google's own popups are off to
-        # avoid the clinic getting two sets of notifications.
+        # avoid the business getting two sets of notifications.
         "reminders": {"useDefault": False, "overrides": []},
         "extendedProperties": {
-            "private": {"source": "clinic-ai-receptionist", "clinic_id": clinic.id}
+            "private": {"source": "business-ai-receptionist", "business_id": business.id}
         },
     }
 
 
 async def create_event(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     *,
-    patient_name: str,
-    patient_phone: str,
+    customer_name: str,
+    customer_phone: str,
     reason: str,
     start: datetime,
     end: datetime,
-    doctor: Doctor | None = None,
+    staff_member: StaffMember | None = None,
 ) -> tuple[str, str]:
     """Create the calendar event. Returns (event_id, calendar_id)."""
-    calendar_id = _calendar_id_for(clinic, doctor)
+    calendar_id = _calendar_id_for(business, staff_member)
     body = _event_body(
-        clinic=clinic,
-        patient_name=patient_name,
-        patient_phone=patient_phone,
+        business=business,
+        customer_name=customer_name,
+        customer_phone=customer_phone,
         reason=reason,
         start=start,
         end=end,
-        doctor_name=doctor.name if doctor else "",
+        staff_member_name=staff_member.name if staff_member else "",
     )
     data = await _api_request(
-        db, clinic.id, "POST", f"/calendars/{calendar_id}/events", json_body=body
+        db, business.id, "POST", f"/calendars/{calendar_id}/events", json_body=body
     )
     event_id = data.get("id", "")
-    logger.info("Created Google Calendar event %s for clinic %s", event_id, clinic.id)
+    logger.info("Created Google Calendar event %s for business %s", event_id, business.id)
     return event_id, calendar_id
 
 
 async def update_event_time(
     db: AsyncSession,
-    clinic: Clinic,
+    business: Business,
     appointment: Appointment,
     *,
     start: datetime,
     end: datetime,
 ) -> None:
     """Move an existing event (reschedule) rather than delete-and-recreate, so
-    the patient's calendar invite keeps its identity."""
+    the customer's calendar invite keeps its identity."""
     if not appointment.google_event_id:
         logger.info(
             "Appointment %s has no calendar event to move; skipping.", appointment.id
@@ -527,14 +527,14 @@ async def update_event_time(
     }
     await _api_request(
         db,
-        clinic.id,
+        business.id,
         "PATCH",
         f"/calendars/{calendar_id}/events/{appointment.google_event_id}",
         json_body=body,
     )
 
 
-async def delete_event(db: AsyncSession, clinic: Clinic, appointment: Appointment) -> None:
+async def delete_event(db: AsyncSession, business: Business, appointment: Appointment) -> None:
     """Remove the event on cancellation.
 
     An already-deleted event (404/410) is treated as success: the desired end
@@ -546,7 +546,7 @@ async def delete_event(db: AsyncSession, clinic: Clinic, appointment: Appointmen
     try:
         await _api_request(
             db,
-            clinic.id,
+            business.id,
             "DELETE",
             f"/calendars/{calendar_id}/events/{appointment.google_event_id}",
         )

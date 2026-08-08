@@ -67,7 +67,7 @@ export class ApiError extends Error {
     );
   }
 
-  /** True when the cause is a missing integration the clinic must connect. */
+  /** True when the cause is a missing integration the business must connect. */
   get isIntegrationError(): boolean {
     return this.code === "INTEGRATION_NOT_CONFIGURED";
   }

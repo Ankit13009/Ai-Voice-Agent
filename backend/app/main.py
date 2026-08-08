@@ -34,7 +34,7 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
-logger = logging.getLogger("clinic-receptionist")
+logger = logging.getLogger("business-receptionist")
 
 # Brute-force protection on the endpoints worth attacking: {prefix: (max, seconds)}
 RATE_LIMIT_RULES = {
@@ -63,7 +63,7 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("Reminder scheduler is disabled; WhatsApp reminders will not be sent.")
 
-    logger.info("Clinic AI Receptionist started (env=%s)", settings.app_env)
+    logger.info("Business AI Receptionist started (env=%s)", settings.app_env)
 
     yield
 
@@ -79,10 +79,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Clinic AI Receptionist API",
+    title="Business AI Receptionist API",
     version="1.0.0",
     description=(
-        "Multi-tenant AI phone receptionist for clinics. Every endpoint returns "
+        "Multi-tenant AI phone receptionist for businesses. Every endpoint returns "
         "the same envelope: `{success, data, meta, message, request_id, timestamp}` "
         "on success and `{success, error: {code, message, details}, request_id, "
         "timestamp}` on failure."
@@ -101,7 +101,7 @@ register_exception_handlers(app)
 app.add_middleware(
     CORSMiddleware,
     # Exact origins only. A regex like `.*\.vercel\.app` would let any attacker's
-    # preview deployment read authenticated responses from a logged-in clinic.
+    # preview deployment read authenticated responses from a logged-in business.
     allow_origins=settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],

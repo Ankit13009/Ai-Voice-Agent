@@ -4,9 +4,9 @@
  * Centralised so a duration reads the same on the call log as on the dashboard.
  *
  * A note on timezones: the API already sends `starts_at_local` pre-rendered in
- * the *clinic's* timezone. Prefer that field over reformatting `starts_at` here,
+ * the *business's* timezone. Prefer that field over reformatting `starts_at` here,
  * because the browser's timezone is the staff member's, which is not
- * necessarily the clinic's.
+ * necessarily the business's.
  */
 
 export function formatDuration(seconds: number): string {

@@ -33,7 +33,7 @@ class ErrorCode(StrEnum):
     # --- 403 ---
     FORBIDDEN = "FORBIDDEN"
     INSUFFICIENT_ROLE = "INSUFFICIENT_ROLE"
-    CLINIC_ACCESS_DENIED = "CLINIC_ACCESS_DENIED"
+    BUSINESS_ACCESS_DENIED = "BUSINESS_ACCESS_DENIED"
     WEBHOOK_SIGNATURE_INVALID = "WEBHOOK_SIGNATURE_INVALID"
 
     # --- 404 ---
@@ -165,16 +165,16 @@ class InsufficientRoleError(AppError):
         super().__init__(message, **kw)
 
 
-class ClinicAccessDeniedError(AppError):
-    """Raised when a token's clinic does not match the requested resource.
+class BusinessAccessDeniedError(AppError):
+    """Raised when a token's business does not match the requested resource.
 
     Deliberately worded like a 403 rather than leaking whether the id exists.
     """
 
     status_code = 403
-    code = ErrorCode.CLINIC_ACCESS_DENIED
+    code = ErrorCode.BUSINESS_ACCESS_DENIED
 
-    def __init__(self, message: str = "You do not have access to this clinic.", **kw: Any) -> None:
+    def __init__(self, message: str = "You do not have access to this business.", **kw: Any) -> None:
         super().__init__(message, **kw)
 
 
@@ -223,7 +223,7 @@ class RateLimitedError(AppError):
 
 class IntegrationNotConfiguredError(AppError):
     """A third-party integration (Google Calendar, WhatsApp, VAPI) is not set up
-    for this clinic. 503 because it is a server-side config gap, not a caller
+    for this business. 503 because it is a server-side config gap, not a caller
     mistake."""
 
     status_code = 503

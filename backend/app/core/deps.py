@@ -2,12 +2,12 @@
 
 This module is the security boundary. Two rules hold everywhere:
 
-1. The active clinic id comes from the verified JWT, never from a path, query,
-   or body parameter. A caller cannot ask for another clinic's data because
+1. The active business id comes from the verified JWT, never from a path, query,
+   or body parameter. A caller cannot ask for another business's data because
    there is no input that would let them express the request.
 
 2. Single-object reads go through `scoped_get()`, which filters by primary key
-   *and* clinic id. Fetch-then-check is not used: it is one forgotten `if` away
+   *and* business id. Fetch-then-check is not used: it is one forgotten `if` away
    from an IDOR, and it also distinguishes "exists but not yours" from "does not
    exist" through response timing.
 """
@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
-    ClinicAccessDeniedError,
+    BusinessAccessDeniedError,
     ForbiddenError,
     InsufficientRoleError,
     NotFoundError,
@@ -49,7 +49,7 @@ class CurrentUser:
     email: str
     full_name: str
     role: UserRole
-    clinic_id: str | None
+    business_id: str | None
 
     @property
     def is_superadmin(self) -> bool:
@@ -86,15 +86,15 @@ async def get_current_user(
         # Same message either way: do not reveal whether the account exists.
         raise UnauthenticatedError("Your session is no longer valid. Please sign in again.")
 
-    # If the token's clinic claim disagrees with the database, the user was moved
-    # or their clinic was reassigned after the token was issued. Refuse it.
-    token_clinic = payload.get("clinic_id")
-    if token_clinic != user.clinic_id:
+    # If the token's business claim disagrees with the database, the user was moved
+    # or their business was reassigned after the token was issued. Refuse it.
+    token_business = payload.get("business_id")
+    if token_business != user.business_id:
         logger.warning(
-            "Token clinic claim %r does not match user %s clinic %r; rejecting.",
-            token_clinic,
+            "Token business claim %r does not match user %s business %r; rejecting.",
+            token_business,
             user.id,
-            user.clinic_id,
+            user.business_id,
         )
         raise UnauthenticatedError("Your session is no longer valid. Please sign in again.")
 
@@ -103,7 +103,7 @@ async def get_current_user(
         email=user.email,
         full_name=user.full_name,
         role=user.role,
-        clinic_id=user.clinic_id,
+        business_id=user.business_id,
     )
     # Stashed for the audit-log helper and request logging.
     request.state.current_user = current
@@ -116,47 +116,47 @@ CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
 # --------------------------------------------------------------------------- #
 # Tenant scoping
 # --------------------------------------------------------------------------- #
-async def get_active_clinic_id(
+async def get_active_business_id(
     user: CurrentUserDep,
-    clinic_id: Annotated[
+    business_id: Annotated[
         str | None,
         Query(
             description=(
-                "Superadmin only: act on this clinic. Ignored for clinic users, "
-                "who are always scoped to their own clinic."
+                "Superadmin only: act on this business. Ignored for business users, "
+                "who are always scoped to their own business."
             )
         ),
     ] = None,
 ) -> str:
-    """Resolve the clinic every query in this request must filter by.
+    """Resolve the business every query in this request must filter by.
 
-    For a clinic user this is their own clinic and the `clinic_id` query
+    For a business user this is their own business and the `business_id` query
     parameter is ignored outright, so passing someone else's id changes nothing.
     Only a superadmin can target another tenant, and doing so is auditable.
     """
     if user.is_superadmin:
-        if clinic_id:
-            return clinic_id
-        raise ClinicAccessDeniedError(
-            "Superadmin requests must specify which clinic to act on via ?clinic_id="
+        if business_id:
+            return business_id
+        raise BusinessAccessDeniedError(
+            "Superadmin requests must specify which business to act on via ?business_id="
         )
 
-    if not user.clinic_id:
-        raise ForbiddenError("Your account is not linked to a clinic.")
+    if not user.business_id:
+        raise ForbiddenError("Your account is not linked to a business.")
 
-    if clinic_id and clinic_id != user.clinic_id:
+    if business_id and business_id != user.business_id:
         logger.warning(
-            "User %s attempted to access clinic %s but belongs to %s.",
+            "User %s attempted to access business %s but belongs to %s.",
             user.id,
-            clinic_id,
-            user.clinic_id,
+            business_id,
+            user.business_id,
         )
-        raise ClinicAccessDeniedError()
+        raise BusinessAccessDeniedError()
 
-    return user.clinic_id
+    return user.business_id
 
 
-ActiveClinic = Annotated[str, Depends(get_active_clinic_id)]
+ActiveBusiness = Annotated[str, Depends(get_active_business_id)]
 
 
 # --------------------------------------------------------------------------- #
@@ -218,21 +218,21 @@ async def scoped_get(
     db: AsyncSession,
     model: type[ModelT],
     resource_id: str,
-    clinic_id: str,
+    business_id: str,
     *,
     resource_name: str | None = None,
 ) -> ModelT:
-    """Load one row by id, constrained to the active clinic.
+    """Load one row by id, constrained to the active business.
 
-    Prefer this over `db.get()` plus a manual ownership check. The clinic filter
+    Prefer this over `db.get()` plus a manual ownership check. The business filter
     is part of the query, so there is no window in which the object exists in
     memory before anyone has verified the caller may see it. Missing and
     not-yours both raise the same 404, which keeps the endpoint from confirming
-    that an id belongs to some other clinic.
+    that an id belongs to some other business.
     """
     stmt = select(model).where(
         model.id == resource_id,  # type: ignore[attr-defined]
-        model.clinic_id == clinic_id,  # type: ignore[attr-defined]
+        model.business_id == business_id,  # type: ignore[attr-defined]
     )
     obj = (await db.execute(stmt)).scalar_one_or_none()
     if obj is None:
@@ -252,7 +252,7 @@ async def write_audit_log(
     request: Request,
     *,
     action: str,
-    clinic_id: str | None = None,
+    business_id: str | None = None,
     resource_type: str = "",
     resource_id: str = "",
     metadata: dict[str, Any] | None = None,
@@ -265,7 +265,7 @@ async def write_audit_log(
         user: CurrentUser | None = getattr(request.state, "current_user", None)
         db.add(
             AuditLog(
-                clinic_id=clinic_id,
+                business_id=business_id,
                 actor_user_id=user.id if user else None,
                 actor_label=user.email if user else "system",
                 action=action,

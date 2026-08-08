@@ -6,16 +6,19 @@ JSON result, and the model speaks a reply based on it.
 
 Two design rules:
 
-1. No tool accepts a clinic id. The clinic is resolved server-side from the
+1. No tool accepts a business id. The business is resolved server-side from the
    assistant/phone number on the call, so a prompt-injected caller ("book me
-   into clinic xyz") cannot reach another tenant.
+   into business xyz") cannot reach another tenant.
 
 2. Times are ISO-8601 *with* an offset. Handing the model a naive local time is
    how appointments end up 5.5 hours out, so the description is explicit and the
    server rejects naive values.
 """
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from app.db.models import Business
 
 from app.config import get_settings
 
@@ -32,7 +35,7 @@ CHECK_AVAILABILITY = {
         "description": (
             "Find real open appointment slots. Always call this before offering "
             "any time to the caller. Returns only slots that are genuinely free "
-            "on the clinic's calendar."
+            "on the business's calendar."
         ),
         "parameters": {
             "type": "object",
@@ -40,7 +43,7 @@ CHECK_AVAILABILITY = {
                 "date": {
                     "type": "string",
                     "description": (
-                        "The day the caller asked about, as YYYY-MM-DD in the clinic's "
+                        "The day the caller asked about, as YYYY-MM-DD in the business's "
                         "local date. Work it out from the current date given in your "
                         "instructions (for example 'kal' or 'tomorrow'). Leave empty to "
                         "search from now onwards."
@@ -51,12 +54,11 @@ CHECK_AVAILABILITY = {
                     "enum": ["morning", "afternoon", "evening", "any"],
                     "description": "Rough preference the caller expressed, if any.",
                 },
-                "doctor_id": {
+                "staff_member_id": {
                     "type": "string",
                     "description": (
-                        "The id of the doctor the caller asked for, taken from the "
-                        "doctor list in your instructions. Leave empty if they did not "
-                        "name one."
+                        "The id of the {staff_singular} the caller asked for, taken from the "
+                        "list in your instructions. Leave empty if they did not name one."
                     ),
                 },
             },
@@ -78,13 +80,13 @@ BOOK_APPOINTMENT = {
         "parameters": {
             "type": "object",
             "properties": {
-                "patient_name": {"type": "string", "description": "The patient's full name."},
-                "patient_phone": {
+                "customer_name": {"type": "string", "description": "The {customer_singular}'s full name."},
+                "customer_phone": {
                     "type": "string",
                     "description": (
                         "Callback number in international format, e.g. +919876543210. "
                         "If the caller says to use the number they are calling from, "
-                        "pass an empty string and the clinic's system will use it."
+                        "pass an empty string and the business's system will use it."
                     ),
                 },
                 "starts_at": {
@@ -99,9 +101,9 @@ BOOK_APPOINTMENT = {
                     "type": "string",
                     "description": "A short reason for the visit, e.g. 'fever and cough', 'follow-up'.",
                 },
-                "doctor_id": {"type": "string", "description": "Doctor id, if one was chosen."},
+                "staff_member_id": {"type": "string", "description": "The {staff_singular} id, if one was chosen."},
             },
-            "required": ["patient_name", "starts_at"],
+            "required": ["customer_name", "starts_at"],
         },
     },
 }
@@ -118,7 +120,7 @@ FIND_APPOINTMENT = {
         "parameters": {
             "type": "object",
             "properties": {
-                "patient_phone": {
+                "customer_phone": {
                     "type": "string",
                     "description": (
                         "Only if the caller says the booking is under a different "
@@ -191,11 +193,46 @@ ALL_TOOLS = [
 ]
 
 
-def build_vapi_tools() -> list[dict[str, Any]]:
-    """Attach our webhook URL to every tool, in VAPI's expected shape."""
+def _fill_labels(value: Any, labels: dict[str, str]) -> Any:
+    """Recursively substitute {customer_singular} / {staff_singular} in descriptions.
+
+    Only `str.format_map` on a defaulting dict is used, so a placeholder we
+    forgot to supply renders as itself rather than raising mid-onboarding.
+    """
+    if isinstance(value, str):
+        try:
+            return value.format_map(_Defaulting(labels))
+        except (ValueError, IndexError):
+            # A literal brace in a description (JSON examples) is not a placeholder.
+            return value
+    if isinstance(value, dict):
+        return {k: _fill_labels(v, labels) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_fill_labels(v, labels) for v in value]
+    return value
+
+
+class _Defaulting(dict):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def build_vapi_tools(business: "Business | None" = None) -> list[dict[str, Any]]:
+    """Attach our webhook URL to every tool, in VAPI's expected shape.
+
+    Descriptions are rendered in the tenant's own vocabulary, so a salon's agent
+    is told to collect "the Client's full name" and a clinic's "the Patient's
+    full name" from one shared tool definition.
+    """
+    labels = (
+        {
+            "customer_singular": business.label("customer_singular").lower(),
+            "staff_singular": business.label("staff_singular").lower(),
+            "booking_singular": business.label("booking_singular").lower(),
+        }
+        if business is not None
+        else {}
+    )
+
     url = _server_url()
-    tools: list[dict[str, Any]] = []
-    for tool in ALL_TOOLS:
-        entry = {**tool, "server": {"url": url}}
-        tools.append(entry)
-    return tools
+    return [{**_fill_labels(tool, labels), "server": {"url": url}} for tool in ALL_TOOLS]

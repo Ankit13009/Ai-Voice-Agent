@@ -6,8 +6,8 @@ import { ToastProvider } from "@/components/ui";
 import "@/styles/globals.css";
 
 export const metadata: Metadata = {
-  title: "Clinic Receptionist",
-  description: "AI phone receptionist for clinics: calls, appointments, reminders.",
+  title: "Business Receptionist",
+  description: "AI phone receptionist for businesses: calls, appointments, reminders.",
 };
 
 /**

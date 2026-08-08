@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { Shell } from "@/components/layout/Shell";
 import { useAuth } from "@/lib/auth";
+import { LabelProvider } from "@/lib/labels";
 import { PageLoading } from "@/components/ui";
 
 /**
@@ -34,5 +35,9 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   // Render nothing during the redirect rather than flashing the shell.
   if (!user) return null;
 
-  return <Shell>{children}</Shell>;
+  return (
+    <LabelProvider>
+      <Shell>{children}</Shell>
+    </LabelProvider>
+  );
 }

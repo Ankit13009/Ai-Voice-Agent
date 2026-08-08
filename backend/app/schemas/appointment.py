@@ -1,4 +1,4 @@
-"""Appointment, patient, call, and WhatsApp payloads."""
+"""Appointment, customer, call, and WhatsApp payloads."""
 
 from datetime import datetime
 
@@ -16,9 +16,9 @@ PHONE_PATTERN = r"^\+[1-9]\d{7,14}$"
 
 
 # --------------------------------------------------------------------------- #
-# Patients
+# Customers
 # --------------------------------------------------------------------------- #
-class PatientOut(BaseModel):
+class CustomerOut(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     id: str
@@ -30,8 +30,8 @@ class PatientOut(BaseModel):
     created_at: datetime
 
 
-class PatientSummary(BaseModel):
-    """Trimmed patient block embedded in appointment/call responses, so the
+class CustomerSummary(BaseModel):
+    """Trimmed customer block embedded in appointment/call responses, so the
     frontend can render a row without a second request."""
 
     id: str
@@ -39,7 +39,7 @@ class PatientSummary(BaseModel):
     phone: str
 
 
-class PatientUpdate(BaseModel):
+class CustomerUpdate(BaseModel):
     name: str | None = Field(default=None, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     preferred_language: Language | None = None
@@ -51,20 +51,20 @@ class PatientUpdate(BaseModel):
 # --------------------------------------------------------------------------- #
 class SlotOut(BaseModel):
     """One bookable opening. `starts_at` is UTC; `label` is pre-formatted in the
-    clinic's timezone so the agent can speak it and the UI can show it without
+    business's timezone so the agent can speak it and the UI can show it without
     either re-deriving the conversion."""
 
     starts_at: datetime
     ends_at: datetime
     label: str
-    doctor_id: str | None = None
-    doctor_name: str = ""
+    staff_member_id: str | None = None
+    staff_member_name: str = ""
 
 
 class AvailabilityQuery(BaseModel):
     date_from: datetime
     date_to: datetime
-    doctor_id: str | None = None
+    staff_member_id: str | None = None
     duration_minutes: int | None = Field(default=None, ge=5, le=240)
 
     @model_validator(mode="after")
@@ -86,15 +86,15 @@ class AppointmentOut(BaseModel):
     status: AppointmentStatus
     starts_at: datetime
     ends_at: datetime
-    # Same instant as `starts_at`, rendered in the clinic's timezone for display.
+    # Same instant as `starts_at`, rendered in the business's timezone for display.
     starts_at_local: str
     reason: str
     notes: str
     cancellation_reason: str
 
-    patient: PatientSummary
-    doctor_id: str | None
-    doctor_name: str = ""
+    customer: CustomerSummary
+    staff_member_id: str | None
+    staff_member_name: str = ""
     call_id: str | None = None
 
     google_event_id: str
@@ -104,10 +104,10 @@ class AppointmentOut(BaseModel):
 
 
 class AppointmentCreate(BaseModel):
-    patient_name: str = Field(..., min_length=1, max_length=255)
-    patient_phone: str = Field(..., pattern=PHONE_PATTERN)
+    customer_name: str = Field(..., min_length=1, max_length=255)
+    customer_phone: str = Field(..., pattern=PHONE_PATTERN)
     starts_at: datetime = Field(..., description="Appointment start, ISO-8601 with offset.")
-    doctor_id: str | None = None
+    staff_member_id: str | None = None
     appointment_type_id: str | None = None
     duration_minutes: int | None = Field(default=None, ge=5, le=240)
     reason: str = Field(default="", max_length=2000)
@@ -129,7 +129,7 @@ class AppointmentCreate(BaseModel):
 
 class AppointmentReschedule(BaseModel):
     starts_at: datetime
-    doctor_id: str | None = None
+    staff_member_id: str | None = None
     reason: str = Field(default="", max_length=2000)
 
     @field_validator("starts_at")
@@ -142,7 +142,7 @@ class AppointmentReschedule(BaseModel):
 
 class AppointmentCancel(BaseModel):
     reason: str = Field(default="", max_length=2000)
-    notify_patient: bool = True
+    notify_customer: bool = True
 
 
 # --------------------------------------------------------------------------- #
@@ -162,7 +162,7 @@ class CallOut(BaseModel):
     summary: str
     recording_url: str
     ended_reason: str
-    patient: PatientSummary | None = None
+    customer: CustomerSummary | None = None
     appointment_id: str | None = None
     created_at: datetime
 

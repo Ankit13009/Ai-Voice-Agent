@@ -7,14 +7,14 @@ from zoneinfo import ZoneInfo
 from fastapi import APIRouter
 from sqlalchemy import func, select
 
-from app.core.deps import ActiveClinic, CurrentUserDep, DbSession
+from app.core.deps import ActiveBusiness, CurrentUserDep, DbSession
 from app.core.response import ok
 from app.db.models import (
     Appointment,
     AppointmentStatus,
     Call,
     CallOutcome,
-    Clinic,
+    Business,
     MessageStatus,
     WhatsAppMessage,
 )
@@ -27,15 +27,15 @@ ACTIVE_STATUSES = (AppointmentStatus.SCHEDULED, AppointmentStatus.RESCHEDULED)
 
 
 @router.get("/stats", summary="Overview counters")
-async def stats(clinic_id: ActiveClinic, db: DbSession, _user: CurrentUserDep) -> dict:
+async def stats(business_id: ActiveBusiness, db: DbSession, _user: CurrentUserDep) -> dict:
     """Counters for the overview page.
 
-    "Today" is the clinic's local day, not UTC. In IST that is a 5.5-hour
+    "Today" is the business's local day, not UTC. In IST that is a 5.5-hour
     difference, so a UTC day boundary would show the wrong number for most of
-    the clinic's evening.
+    the business's evening.
     """
-    clinic = (await db.execute(select(Clinic).where(Clinic.id == clinic_id))).scalar_one()
-    zone = ZoneInfo(clinic.timezone)
+    business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
+    zone = ZoneInfo(business.timezone)
     now = datetime.now(timezone.utc)
     local_now = now.astimezone(zone)
 
@@ -46,33 +46,33 @@ async def stats(clinic_id: ActiveClinic, db: DbSession, _user: CurrentUserDep) -
         return (await db.execute(stmt)).scalar_one() or 0
 
     calls_total = await count(
-        select(func.count(Call.id)).where(Call.clinic_id == clinic_id)
+        select(func.count(Call.id)).where(Call.business_id == business_id)
     )
     calls_today = await count(
         select(func.count(Call.id)).where(
-            Call.clinic_id == clinic_id, Call.created_at >= day_start, Call.created_at < day_end
+            Call.business_id == business_id, Call.created_at >= day_start, Call.created_at < day_end
         )
     )
     booked_by_agent = await count(
         select(func.count(Call.id)).where(
-            Call.clinic_id == clinic_id, Call.outcome == CallOutcome.BOOKED
+            Call.business_id == business_id, Call.outcome == CallOutcome.BOOKED
         )
     )
     no_details = await count(
         select(func.count(Call.id)).where(
-            Call.clinic_id == clinic_id, Call.outcome == CallOutcome.NO_DETAILS
+            Call.business_id == business_id, Call.outcome == CallOutcome.NO_DETAILS
         )
     )
     appointments_upcoming = await count(
         select(func.count(Appointment.id)).where(
-            Appointment.clinic_id == clinic_id,
+            Appointment.business_id == business_id,
             Appointment.status.in_(ACTIVE_STATUSES),
             Appointment.starts_at >= now,
         )
     )
     appointments_today = await count(
         select(func.count(Appointment.id)).where(
-            Appointment.clinic_id == clinic_id,
+            Appointment.business_id == business_id,
             Appointment.status.in_(ACTIVE_STATUSES),
             Appointment.starts_at >= day_start,
             Appointment.starts_at < day_end,
@@ -80,12 +80,12 @@ async def stats(clinic_id: ActiveClinic, db: DbSession, _user: CurrentUserDep) -
     )
     cancelled = await count(
         select(func.count(Appointment.id)).where(
-            Appointment.clinic_id == clinic_id, Appointment.status == AppointmentStatus.CANCELLED
+            Appointment.business_id == business_id, Appointment.status == AppointmentStatus.CANCELLED
         )
     )
     whatsapp_sent = await count(
         select(func.count(WhatsAppMessage.id)).where(
-            WhatsAppMessage.clinic_id == clinic_id,
+            WhatsAppMessage.business_id == business_id,
             WhatsAppMessage.status.in_(
                 [MessageStatus.SENT, MessageStatus.DELIVERED, MessageStatus.READ]
             ),
@@ -93,14 +93,14 @@ async def stats(clinic_id: ActiveClinic, db: DbSession, _user: CurrentUserDep) -
     )
     whatsapp_failed = await count(
         select(func.count(WhatsAppMessage.id)).where(
-            WhatsAppMessage.clinic_id == clinic_id, WhatsAppMessage.status == MessageStatus.FAILED
+            WhatsAppMessage.business_id == business_id, WhatsAppMessage.status == MessageStatus.FAILED
         )
     )
 
     avg_duration = (
         await db.execute(
             select(func.avg(Call.duration_seconds)).where(
-                Call.clinic_id == clinic_id, Call.duration_seconds > 0
+                Call.business_id == business_id, Call.duration_seconds > 0
             )
         )
     ).scalar_one_or_none()

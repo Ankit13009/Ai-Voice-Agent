@@ -3,8 +3,9 @@
 import { useMemo, useState } from "react";
 
 import { ApiError } from "@/lib/api/client";
-import { appointmentApi, clinicApi } from "@/lib/api/endpoints";
+import { appointmentApi, businessApi } from "@/lib/api/endpoints";
 import { useApiList, useApiQuery, useMutation } from "@/lib/useApi";
+import { useLabels } from "@/lib/labels";
 import { formatPhone, isoToLocalInput, localInputToIso } from "@/lib/format";
 import type { Appointment, AppointmentStatus, Slot } from "@/types/api";
 import {
@@ -37,6 +38,7 @@ const STATUS_OPTIONS = [
 
 export default function AppointmentsPage() {
   const toast = useToast();
+  const { title, lower } = useLabels();
   const [status, setStatus] = useState<AppointmentStatus | "">("");
   const [search, setSearch] = useState("");
   const [bookOpen, setBookOpen] = useState(false);
@@ -60,7 +62,7 @@ export default function AppointmentsPage() {
   const cancel = useMutation(async (appointment: Appointment, reason: string) => {
     const { message } = await appointmentApi.cancel(appointment.id, {
       reason,
-      notify_patient: true,
+      notify_customer: true,
     });
     toast.showSuccess(message, "Appointment cancelled.");
     setCancelling(null);
@@ -70,12 +72,12 @@ export default function AppointmentsPage() {
   const columns = useMemo<Array<Column<Appointment>>>(
     () => [
       {
-        key: "patient",
-        header: "Patient",
+        key: "customer",
+        header: title("customer_singular"),
         render: (appointment) => (
           <CellStack
-            primary={appointment.patient.name || "Unnamed"}
-            secondary={formatPhone(appointment.patient.phone)}
+            primary={appointment.customer.name || "Unnamed"}
+            secondary={formatPhone(appointment.customer.phone)}
           />
         ),
       },
@@ -83,18 +85,18 @@ export default function AppointmentsPage() {
         key: "when",
         header: "When",
         render: (appointment) => (
-          // The API pre-renders this in the clinic's timezone, which is not
+          // The API pre-renders this in the business's timezone, which is not
           // necessarily the timezone of the staff member reading the screen.
           <span className="text-sm text-ink tnum">{appointment.starts_at_local}</span>
         ),
       },
       {
-        key: "doctor",
-        header: "Doctor",
+        key: "staffMember",
+        header: title("staff_singular"),
         hideOnMobile: true,
         render: (appointment) => (
           <span className="text-sm text-ink-muted">
-            {appointment.doctor_name || "Any"}
+            {appointment.staff_member_name || "Any"}
           </span>
         ),
       },
@@ -146,14 +148,14 @@ export default function AppointmentsPage() {
         },
       },
     ],
-    [],
+    [title],
   );
 
   return (
     <>
       <PageHeader
-        title="Appointments"
-        description="Everything booked by the agent or by your front desk."
+        title={title("booking_plural")}
+        description={`Every ${lower("booking_singular")} booked by the agent or by your front desk.`}
         action={
           <Button variant="primary" onClick={() => setBookOpen(true)}>
             Book appointment
@@ -165,7 +167,7 @@ export default function AppointmentsPage() {
         <div className="flex flex-wrap items-center gap-3 px-5 py-3 border-b border-line">
           <Input
             className="max-w-xs"
-            placeholder="Search by patient name or phone"
+            placeholder={`Search by ${lower("customer_singular")} name or phone`}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
             aria-label="Search appointments"
@@ -240,8 +242,8 @@ export default function AppointmentsPage() {
         busy={cancel.pending}
       >
         <p className="text-sm text-ink-muted">
-          The event will be removed from the clinic calendar, any pending reminders will
-          be stopped, and the patient will be told on WhatsApp.
+          The event will be removed from the business calendar, any pending reminders will
+          be stopped, and the customer will be told on WhatsApp.
         </p>
       </ConfirmDialog>
     </>
@@ -250,7 +252,7 @@ export default function AppointmentsPage() {
 
 /**
  * Booking uses real availability rather than a free datetime field: the slot
- * list comes from the clinic's live calendar, so a staff member cannot book
+ * list comes from the business's live calendar, so a staff member cannot book
  * over an existing appointment or outside working hours.
  */
 function BookAppointmentModal({
@@ -270,12 +272,12 @@ function BookAppointmentModal({
   const [slot, setSlot] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  const clinic = useApiQuery((signal) => clinicApi.me(signal), [open]);
+  const business = useApiQuery((signal) => businessApi.me(signal), [open]);
 
   const availability = useApiQuery<Slot[]>(
     (signal) =>
       open
-        ? appointmentApi.availability({ doctor_id: doctorId || undefined, limit: 30 }, signal)
+        ? appointmentApi.availability({ staff_member_id: doctorId || undefined, limit: 30 }, signal)
         : Promise.resolve([]),
     [open, doctorId],
   );
@@ -284,10 +286,10 @@ function BookAppointmentModal({
     setFieldErrors({});
     try {
       const { message } = await appointmentApi.create({
-        patient_name: name.trim(),
-        patient_phone: phone.trim(),
+        customer_name: name.trim(),
+        customer_phone: phone.trim(),
         starts_at: slot,
-        doctor_id: doctorId || null,
+        staff_member_id: doctorId || null,
         reason: reason.trim(),
       });
       toast.showSuccess(message, "Appointment booked.");
@@ -306,9 +308,9 @@ function BookAppointmentModal({
     }
   });
 
-  const doctorOptions = (clinic.data?.doctors ?? [])
-    .filter((doctor) => doctor.is_active)
-    .map((doctor) => ({ value: doctor.id, label: doctor.name }));
+  const doctorOptions = (business.data?.staff_members ?? [])
+    .filter((staffMember) => staffMember.is_active)
+    .map((staffMember) => ({ value: staffMember.id, label: staffMember.name }));
 
   const slotOptions = (availability.data ?? []).map((available) => ({
     value: available.starts_at,
@@ -320,7 +322,7 @@ function BookAppointmentModal({
       open={open}
       onClose={onClose}
       title="Book an appointment"
-      description="Only slots that are genuinely free on the clinic calendar are offered."
+      description="Only slots that are genuinely free on the business calendar are offered."
       busy={book.pending}
       footer={
         <>
@@ -346,7 +348,7 @@ function BookAppointmentModal({
           </Alert>
         )}
 
-        <Field label="Patient name" required error={fieldErrors.patient_name}>
+        <Field label="Customer name" required error={fieldErrors.customer_name}>
           <Input
             value={name}
             onChange={(event) => setName(event.target.value)}
@@ -358,7 +360,7 @@ function BookAppointmentModal({
           label="Phone number"
           required
           hint="Include the country code, e.g. +919876543210."
-          error={fieldErrors.patient_phone}
+          error={fieldErrors.customer_phone}
         >
           <Input
             value={phone}
@@ -369,14 +371,14 @@ function BookAppointmentModal({
         </Field>
 
         {doctorOptions.length > 0 && (
-          <Field label="Doctor" hint="Leave empty to use the clinic's general schedule.">
+          <Field label="StaffMember" hint="Leave empty to use the business's general schedule.">
             <Select
               options={doctorOptions}
-              placeholder="Any doctor"
+              placeholder="Any staffMember"
               value={doctorId}
               onChange={(event) => {
                 setDoctorId(event.target.value);
-                // Slots are per-doctor, so a previously chosen one is no longer valid.
+                // Slots are per-staffMember, so a previously chosen one is no longer valid.
                 setSlot("");
               }}
             />
@@ -462,7 +464,7 @@ function RescheduleModal({
       title="Move this appointment"
       description={
         appointment
-          ? `${appointment.patient.name || "Patient"} · currently ${appointment.starts_at_local}`
+          ? `${appointment.customer.name || "Customer"} · currently ${appointment.starts_at_local}`
           : undefined
       }
       busy={move.pending}
@@ -501,13 +503,13 @@ function RescheduleModal({
           <Input
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Patient requested a later slot"
+            placeholder="Customer requested a later slot"
           />
         </Field>
 
         <p className="text-xs text-ink-subtle">
           The calendar event moves with it, the old reminders are cancelled, and the
-          patient is sent an updated WhatsApp message.
+          customer is sent an updated WhatsApp message.
         </p>
       </div>
     </Modal>

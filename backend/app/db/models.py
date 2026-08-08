@@ -1,10 +1,10 @@
 """ORM models. Types chosen to behave identically on SQLite (dev) and Postgres.
 
-Tenancy: every table that holds clinic data carries a non-null `clinic_id`, and
+Tenancy: every table that holds business data carries a non-null `business_id`, and
 the API layer derives that value from the caller's JWT, never from a request
 parameter. `TenantMixin` exists to make an un-scoped table obvious in review.
 
-Naming: the caller is a "patient", the appointment is an "appointment". The
+Naming: the caller is a "customer", the appointment is an "appointment". The
 older home-services vocabulary (lead / booking / service area) is gone
 deliberately, so nothing downstream half-speaks the wrong domain.
 """
@@ -46,9 +46,9 @@ class Base(DeclarativeBase):
 # can pass them straight through to the frontend union types.
 # --------------------------------------------------------------------------- #
 class UserRole(StrEnum):
-    SUPERADMIN = "superadmin"  # our staff: can create clinics, sees all tenants
-    OWNER = "owner"  # clinic owner: full access to their own clinic
-    STAFF = "staff"  # clinic receptionist: read + manage appointments
+    SUPERADMIN = "superadmin"  # our staff: can create businesses, sees all tenants
+    OWNER = "owner"  # business owner: full access to their own business
+    STAFF = "staff"  # business receptionist: read + manage appointments
 
 
 class CallOutcome(StrEnum):
@@ -112,21 +112,21 @@ class TimestampMixin:
 
 
 class TenantMixin:
-    """Marks a table as clinic-scoped. Presence of this mixin is the review
-    signal that every query against the table must filter on `clinic_id`."""
+    """Marks a table as business-scoped. Presence of this mixin is the review
+    signal that every query against the table must filter on `business_id`."""
 
     @property
     def tenant_id(self) -> str:  # pragma: no cover - documentation helper
-        return self.clinic_id  # type: ignore[attr-defined]
+        return self.business_id  # type: ignore[attr-defined]
 
 
 # --------------------------------------------------------------------------- #
 # Tenant root
 # --------------------------------------------------------------------------- #
-class Clinic(Base, TimestampMixin):
-    """One row per clinic. This is the tenant boundary and the agent's config."""
+class Business(Base, TimestampMixin):
+    """One row per business. This is the tenant boundary and the agent's config."""
 
-    __tablename__ = "clinics"
+    __tablename__ = "businesses"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -139,9 +139,31 @@ class Clinic(Base, TimestampMixin):
     contact_email: Mapped[str] = mapped_column(String(255), default="")
     timezone: Mapped[str] = mapped_column(String(64), default="Asia/Kolkata")
 
+    # --- Business type configuration ---
+    # These are seeded from a preset in `app/agent/presets.py` at onboarding and
+    # are then fully editable per tenant. Everything downstream (the agent's
+    # prompt, the tool descriptions, the dashboard's wording) reads these
+    # columns, never the preset, so a business type nobody wrote a preset for is
+    # still reachable by editing the form.
+    business_type: Mapped[str] = mapped_column(String(64), default="general", index=True)
+    # Completes "…for {name}, {business_descriptor}."
+    business_descriptor: Mapped[str] = mapped_column(String(255), default="a local business")
+    # What this trade calls its customers, staff, and bookings. Drives both the
+    # agent's spoken vocabulary and the dashboard's labels.
+    labels: Mapped[dict] = mapped_column(JSON, default=dict)
+    # What the agent must collect before booking: [{key, label, required, guidance}].
+    intake_fields: Mapped[list] = mapped_column(JSON, default=list)
+    # Constraints the agent must not break. This is where the trade's liability
+    # lives: a clinic must not diagnose, a law firm must not advise, a salon must
+    # not invent prices.
+    agent_rules: Mapped[list] = mapped_column(JSON, default=list)
+    # What to do when the caller describes something urgent. Empty is valid:
+    # plenty of trades have no meaningful emergency path.
+    escalation_instructions: Mapped[str] = mapped_column(Text, default="")
+
     # --- Voice agent (VAPI) ---
     agent_name: Mapped[str] = mapped_column(String(120), default="Asha")
-    # The number patients dial. Unique because inbound calls are routed by it.
+    # The number customers dial. Unique because inbound calls are routed by it.
     phone_number: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
     vapi_assistant_id: Mapped[str] = mapped_column(String(120), default="", index=True)
     vapi_phone_number_id: Mapped[str] = mapped_column(String(120), default="")
@@ -154,21 +176,36 @@ class Clinic(Base, TimestampMixin):
     # --- Scheduling defaults ---
     opens_at: Mapped[time] = mapped_column(Time, default=time(9, 0))
     closes_at: Mapped[time] = mapped_column(Time, default=time(18, 0))
-    # ISO weekday numbers the clinic is open: 1=Mon ... 7=Sun.
+    # ISO weekday numbers the business is open: 1=Mon ... 7=Sun.
     working_days: Mapped[list] = mapped_column(JSON, default=lambda: [1, 2, 3, 4, 5, 6])
     slot_duration_minutes: Mapped[int] = mapped_column(Integer, default=15)
 
     # --- WhatsApp ---
     whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    # Per-clinic override; falls back to the platform-wide number when empty.
+    # Per-business override; falls back to the platform-wide number when empty.
     whatsapp_phone_number_id: Mapped[str] = mapped_column(String(64), default="")
     reminder_24h_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     reminder_2h_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 
-    users: Mapped[list["User"]] = relationship(back_populates="clinic")
-    doctors: Mapped[list["Doctor"]] = relationship(back_populates="clinic")
+    users: Mapped[list["User"]] = relationship(back_populates="business")
+    staff_members: Mapped[list["StaffMember"]] = relationship(back_populates="business")
+
+    # Neutral fallbacks, used when a tenant row predates a label or has it blank.
+    # Never raises: a missing label must degrade to generic wording, not break a
+    # live call or a dashboard render.
+    _DEFAULT_LABELS = {
+        "customer_singular": "Customer",
+        "customer_plural": "Customers",
+        "staff_singular": "Team member",
+        "staff_plural": "Team members",
+        "booking_singular": "appointment",
+        "booking_plural": "appointments",
+    }
+
+    def label(self, key: str) -> str:
+        return (self.labels or {}).get(key) or self._DEFAULT_LABELS.get(key, key)
 
 
 # --------------------------------------------------------------------------- #
@@ -176,7 +213,7 @@ class Clinic(Base, TimestampMixin):
 # --------------------------------------------------------------------------- #
 class User(Base, TimestampMixin):
     __tablename__ = "users"
-    __table_args__ = (Index("ix_users_clinic_role", "clinic_id", "role"),)
+    __table_args__ = (Index("ix_users_business_role", "business_id", "role"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
@@ -185,14 +222,14 @@ class User(Base, TimestampMixin):
     role: Mapped[UserRole] = mapped_column(_enum(UserRole), default=UserRole.STAFF, nullable=False)
 
     # Null only for superadmins, who are not bound to a single tenant.
-    clinic_id: Mapped[str | None] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), nullable=True, index=True
+    business_id: Mapped[str | None] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=True, index=True
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    clinic: Mapped["Clinic | None"] = relationship(back_populates="users")
+    business: Mapped["Business | None"] = relationship(back_populates="users")
 
 
 class RefreshToken(Base):
@@ -215,20 +252,20 @@ class RefreshToken(Base):
 
 
 # --------------------------------------------------------------------------- #
-# Clinic resources
+# Business resources
 # --------------------------------------------------------------------------- #
-class Doctor(Base, TenantMixin, TimestampMixin):
-    __tablename__ = "doctors"
-    __table_args__ = (Index("ix_doctors_clinic_active", "clinic_id", "is_active"),)
+class StaffMember(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "staff_members"
+    __table_args__ = (Index("ix_staff_business_active", "business_id", "is_active"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     specialization: Mapped[str] = mapped_column(String(255), default="")
-    # The Google Calendar this doctor's appointments read from and write to.
-    # Empty means the clinic-level calendar is used.
+    # The Google Calendar this staff_member's appointments read from and write to.
+    # Empty means the business-level calendar is used.
     google_calendar_id: Mapped[str] = mapped_column(String(255), default="")
     consultation_duration_minutes: Mapped[int] = mapped_column(Integer, default=15)
     opens_at: Mapped[time | None] = mapped_column(Time, nullable=True)
@@ -236,7 +273,7 @@ class Doctor(Base, TenantMixin, TimestampMixin):
     working_days: Mapped[list | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    clinic: Mapped["Clinic"] = relationship(back_populates="doctors")
+    business: Mapped["Business"] = relationship(back_populates="staff_members")
 
 
 class AppointmentType(Base, TenantMixin, TimestampMixin):
@@ -245,8 +282,8 @@ class AppointmentType(Base, TenantMixin, TimestampMixin):
     __tablename__ = "appointment_types"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     duration_minutes: Mapped[int] = mapped_column(Integer, default=15)
@@ -254,17 +291,17 @@ class AppointmentType(Base, TenantMixin, TimestampMixin):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
-class Patient(Base, TenantMixin, TimestampMixin):
-    __tablename__ = "patients"
+class Customer(Base, TenantMixin, TimestampMixin):
+    __tablename__ = "customers"
     __table_args__ = (
-        # A phone number identifies a returning patient within one clinic only.
-        UniqueConstraint("clinic_id", "phone", name="uq_patient_clinic_phone"),
-        Index("ix_patients_clinic_created", "clinic_id", "created_at"),
+        # A phone number identifies a returning customer within one business only.
+        UniqueConstraint("business_id", "phone", name="uq_customer_business_phone"),
+        Index("ix_customers_business_created", "business_id", "created_at"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
     )
     name: Mapped[str] = mapped_column(String(255), default="")
     phone: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
@@ -272,7 +309,7 @@ class Patient(Base, TenantMixin, TimestampMixin):
     preferred_language: Mapped[Language] = mapped_column(_enum(Language), default=Language.MIXED)
     notes: Mapped[str] = mapped_column(Text, default="")
 
-    appointments: Mapped[list["Appointment"]] = relationship(back_populates="patient")
+    appointments: Mapped[list["Appointment"]] = relationship(back_populates="customer")
 
 
 # --------------------------------------------------------------------------- #
@@ -281,19 +318,19 @@ class Patient(Base, TenantMixin, TimestampMixin):
 class Call(Base, TenantMixin, TimestampMixin):
     __tablename__ = "calls"
     __table_args__ = (
-        Index("ix_calls_clinic_started", "clinic_id", "started_at"),
-        Index("ix_calls_clinic_outcome", "clinic_id", "outcome"),
+        Index("ix_calls_business_started", "business_id", "started_at"),
+        Index("ix_calls_business_outcome", "business_id", "outcome"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
     )
     # VAPI's call id, used to reconcile the end-of-call webhook with the row the
     # tool-call webhook already created.
     vapi_call_id: Mapped[str] = mapped_column(String(120), default="", index=True)
-    patient_id: Mapped[str | None] = mapped_column(
-        ForeignKey("patients.id", ondelete="SET NULL"), nullable=True, index=True
+    customer_id: Mapped[str | None] = mapped_column(
+        ForeignKey("customers.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
     caller_number: Mapped[str] = mapped_column(String(32), default="")
@@ -312,26 +349,26 @@ class Call(Base, TenantMixin, TimestampMixin):
     cost_paise: Mapped[int] = mapped_column(Integer, default=0)
     ended_reason: Mapped[str] = mapped_column(String(120), default="")
 
-    patient: Mapped["Patient | None"] = relationship()
+    customer: Mapped["Customer | None"] = relationship()
 
 
 class Appointment(Base, TenantMixin, TimestampMixin):
     __tablename__ = "appointments"
     __table_args__ = (
-        Index("ix_appointments_clinic_start", "clinic_id", "starts_at"),
-        Index("ix_appointments_clinic_status", "clinic_id", "status"),
+        Index("ix_appointments_business_start", "business_id", "starts_at"),
+        Index("ix_appointments_business_status", "business_id", "status"),
         Index("ix_appointments_reminder_scan", "status", "starts_at"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    patient_id: Mapped[str] = mapped_column(
-        ForeignKey("patients.id", ondelete="CASCADE"), index=True, nullable=False
+    customer_id: Mapped[str] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    doctor_id: Mapped[str | None] = mapped_column(
-        ForeignKey("doctors.id", ondelete="SET NULL"), nullable=True, index=True
+    staff_member_id: Mapped[str | None] = mapped_column(
+        ForeignKey("staff_members.id", ondelete="SET NULL"), nullable=True, index=True
     )
     appointment_type_id: Mapped[str | None] = mapped_column(
         ForeignKey("appointment_types.id", ondelete="SET NULL"), nullable=True
@@ -341,7 +378,7 @@ class Appointment(Base, TenantMixin, TimestampMixin):
         ForeignKey("calls.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    # Always stored in UTC. The clinic's timezone is applied at the edges only.
+    # Always stored in UTC. The business's timezone is applied at the edges only.
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[AppointmentStatus] = mapped_column(
@@ -358,26 +395,26 @@ class Appointment(Base, TenantMixin, TimestampMixin):
     # Set when this row supersedes an earlier one, so the history stays walkable.
     rescheduled_from_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
-    patient: Mapped["Patient"] = relationship(back_populates="appointments")
-    doctor: Mapped["Doctor | None"] = relationship()
+    customer: Mapped["Customer"] = relationship(back_populates="appointments")
+    staff_member: Mapped["StaffMember | None"] = relationship()
 
 
 # --------------------------------------------------------------------------- #
 # Integrations
 # --------------------------------------------------------------------------- #
 class CalendarCredential(Base, TenantMixin, TimestampMixin):
-    """Google OAuth credentials for one clinic.
+    """Google OAuth credentials for one business.
 
     The refresh token is Fernet-encrypted at rest (`core.security`). It is never
-    returned by any API endpoint; the clinic settings response exposes only
+    returned by any API endpoint; the business settings response exposes only
     `connected_email` and `is_connected`.
     """
 
     __tablename__ = "calendar_credentials"
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), unique=True, index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), unique=True, index=True, nullable=False
     )
     provider: Mapped[str] = mapped_column(String(32), default="google")
     connected_email: Mapped[str] = mapped_column(String(255), default="")
@@ -404,16 +441,16 @@ class WhatsAppMessage(Base, TenantMixin, TimestampMixin):
     __table_args__ = (
         # The scheduler's hot path: pending messages that are now due.
         Index("ix_wa_due", "status", "scheduled_for"),
-        Index("ix_wa_clinic_created", "clinic_id", "created_at"),
+        Index("ix_wa_business_created", "business_id", "created_at"),
         # One message of each kind per appointment. This is what makes the
         # scheduler idempotent: a double-run hits the constraint instead of
-        # double-texting the patient.
+        # double-texting the customer.
         UniqueConstraint("appointment_id", "kind", name="uq_wa_appointment_kind"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str] = mapped_column(
-        ForeignKey("clinics.id", ondelete="CASCADE"), index=True, nullable=False
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
     )
     appointment_id: Mapped[str | None] = mapped_column(
         ForeignKey("appointments.id", ondelete="CASCADE"), nullable=True, index=True
@@ -442,16 +479,16 @@ class WhatsAppMessage(Base, TenantMixin, TimestampMixin):
 class AuditLog(Base):
     """Append-only record of privileged actions.
 
-    Clinic data is health data. Knowing who cancelled an appointment or exported
-    a patient list is a baseline requirement, and it is far cheaper to write from
+    Business data is health data. Knowing who cancelled an appointment or exported
+    a customer list is a baseline requirement, and it is far cheaper to write from
     day one than to retrofit.
     """
 
     __tablename__ = "audit_logs"
-    __table_args__ = (Index("ix_audit_clinic_created", "clinic_id", "created_at"),)
+    __table_args__ = (Index("ix_audit_business_created", "business_id", "created_at"),)
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
-    clinic_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    business_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     actor_user_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     actor_label: Mapped[str] = mapped_column(String(255), default="")
     action: Mapped[str] = mapped_column(String(120), nullable=False)

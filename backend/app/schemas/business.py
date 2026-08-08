@@ -1,4 +1,4 @@
-"""Clinic, doctor, and onboarding payloads."""
+"""Business, staff, and onboarding payloads."""
 
 from datetime import time
 
@@ -17,7 +17,52 @@ def _validate_working_days(v: list[int]) -> list[int]:
     return sorted(set(v))
 
 
-class DoctorOut(BaseModel):
+# --------------------------------------------------------------------------- #
+# Business type configuration
+# --------------------------------------------------------------------------- #
+class BusinessLabels(BaseModel):
+    """What this trade calls its customers, staff, and bookings.
+
+    Drives both the dashboard's wording and the agent's spoken vocabulary, so a
+    salon's dashboard says "Clients" and its agent says "client" from one field.
+    """
+
+    customer_singular: str = Field(default="Customer", max_length=60)
+    customer_plural: str = Field(default="Customers", max_length=60)
+    staff_singular: str = Field(default="Team member", max_length=60)
+    staff_plural: str = Field(default="Team members", max_length=60)
+    booking_singular: str = Field(default="appointment", max_length=60)
+    booking_plural: str = Field(default="appointments", max_length=60)
+
+
+class IntakeFieldSchema(BaseModel):
+    """One thing the agent must collect before it may book."""
+
+    key: str = Field(..., min_length=1, max_length=60)
+    label: str = Field(..., min_length=1, max_length=120)
+    required: bool = True
+    guidance: str = Field(default="", max_length=500)
+
+
+class BusinessTypePresetOut(BaseModel):
+    """A starting point offered in the onboarding form. Every value is editable."""
+
+    slug: str
+    display_name: str
+    default_agent_name: str
+    business_descriptor: str
+    labels: dict[str, str]
+    intake_fields: list[IntakeFieldSchema]
+    rules: list[str]
+    escalation: str
+    example_services: list[str]
+    default_slot_minutes: int
+
+
+# --------------------------------------------------------------------------- #
+# Staff
+# --------------------------------------------------------------------------- #
+class StaffMemberOut(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     id: str
@@ -28,11 +73,11 @@ class DoctorOut(BaseModel):
     is_active: bool
 
 
-class DoctorCreate(BaseModel):
+class StaffMemberCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     specialization: str = Field(default="", max_length=255)
     google_calendar_id: str = Field(default="", max_length=255)
-    consultation_duration_minutes: int = Field(default=15, ge=5, le=240)
+    consultation_duration_minutes: int = Field(default=30, ge=5, le=240)
     opens_at: time | None = None
     closes_at: time | None = None
     working_days: list[int] | None = None
@@ -43,7 +88,7 @@ class DoctorCreate(BaseModel):
         return _validate_working_days(v) if v is not None else None
 
 
-class DoctorUpdate(BaseModel):
+class StaffMemberUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     specialization: str | None = Field(default=None, max_length=255)
     google_calendar_id: str | None = Field(default=None, max_length=255)
@@ -62,8 +107,8 @@ class AppointmentTypeOut(BaseModel):
 class IntegrationStatus(BaseModel):
     """What the settings page shows about a connected third party.
 
-    Credentials themselves are never included: only whether the connection
-    works and which account it points at.
+    Credentials themselves are never included: only whether the connection works
+    and which account it points at.
     """
 
     google_calendar_connected: bool
@@ -73,7 +118,10 @@ class IntegrationStatus(BaseModel):
     whatsapp_configured: bool
 
 
-class ClinicOut(BaseModel):
+# --------------------------------------------------------------------------- #
+# Business
+# --------------------------------------------------------------------------- #
+class BusinessOut(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
     id: str
@@ -84,6 +132,14 @@ class ClinicOut(BaseModel):
     contact_phone: str
     contact_email: str
     timezone: str
+
+    # --- Business type configuration ---
+    business_type: str
+    business_descriptor: str
+    labels: BusinessLabels
+    intake_fields: list[IntakeFieldSchema]
+    agent_rules: list[str]
+    escalation_instructions: str
 
     agent_name: str
     phone_number: str
@@ -103,15 +159,19 @@ class ClinicOut(BaseModel):
     is_active: bool
 
     integrations: IntegrationStatus | None = None
-    doctors: list[DoctorOut] = Field(default_factory=list)
+    staff_members: list[StaffMemberOut] = Field(default_factory=list)
 
 
-class ClinicUpdate(BaseModel):
+class BusinessUpdate(BaseModel):
     """Every field optional: this is a PATCH.
 
-    `phone_number`, `slug`, and `vapi_assistant_id` are absent on purpose.
-    Changing the dialed number or the tenant slug re-points inbound call routing
-    and has to go through the onboarding flow, not a settings form.
+    `phone_number` and `slug` are absent on purpose. Changing the dialed number
+    or the tenant slug re-points inbound call routing and has to go through
+    onboarding, not a settings form.
+
+    The business-type fields ARE editable here. That is the point: a preset is a
+    starting point, and an owner who needs a rule the preset did not anticipate
+    can add it without a deploy.
     """
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
@@ -120,6 +180,13 @@ class ClinicUpdate(BaseModel):
     contact_phone: str | None = Field(default=None, pattern=PHONE_PATTERN)
     contact_email: EmailStr | None = None
     timezone: str | None = Field(default=None, max_length=64)
+
+    business_type: str | None = Field(default=None, max_length=64)
+    business_descriptor: str | None = Field(default=None, max_length=255)
+    labels: BusinessLabels | None = None
+    intake_fields: list[IntakeFieldSchema] | None = None
+    agent_rules: list[str] | None = Field(default=None, max_length=30)
+    escalation_instructions: str | None = Field(default=None, max_length=4000)
 
     agent_name: str | None = Field(default=None, min_length=1, max_length=120)
     primary_language: Language | None = None
@@ -155,16 +222,32 @@ class ClinicUpdate(BaseModel):
         return v
 
 
-class OnboardClinicRequest(BaseModel):
-    """One request creates a fully working clinic: the "1-click new clinic" flow.
+# --------------------------------------------------------------------------- #
+# Onboarding
+# --------------------------------------------------------------------------- #
+class OnboardBusinessRequest(BaseModel):
+    """One request creates a fully working tenant of any business type.
 
-    Everything not supplied falls back to a sensible clinic default, so the
-    minimum viable onboarding is name + phone number + owner email.
+    `business_type` picks a preset, which seeds the vocabulary, intake fields,
+    rules, and escalation path. Every one of those can be overridden here, and
+    all of them stay editable afterwards, so an unusual business never requires
+    a code change.
+
+    The minimum viable request is name + slug + phone number + business type +
+    owner credentials.
     """
 
     name: str = Field(..., min_length=1, max_length=255)
     slug: str = Field(..., min_length=2, max_length=120, pattern=r"^[a-z0-9][a-z0-9-]*$")
-    phone_number: str = Field(..., pattern=PHONE_PATTERN, description="The number patients dial.")
+    phone_number: str = Field(
+        ..., pattern=PHONE_PATTERN, description="The number customers dial."
+    )
+
+    business_type: str = Field(
+        default="general",
+        max_length=64,
+        description="Preset slug. Call GET /onboarding/business-types for the list.",
+    )
 
     owner_email: EmailStr
     owner_password: str = Field(..., min_length=10, max_length=72)
@@ -175,7 +258,14 @@ class OnboardClinicRequest(BaseModel):
     contact_phone: str = Field(default="", max_length=32)
     timezone: str = Field(default="Asia/Kolkata", max_length=64)
 
-    agent_name: str = Field(default="Asha", max_length=120)
+    # --- Preset overrides. Omit to accept the preset's value. ---
+    agent_name: str | None = Field(default=None, max_length=120)
+    business_descriptor: str | None = Field(default=None, max_length=255)
+    labels: BusinessLabels | None = None
+    intake_fields: list[IntakeFieldSchema] | None = None
+    agent_rules: list[str] | None = Field(default=None, max_length=30)
+    escalation_instructions: str | None = Field(default=None, max_length=4000)
+
     primary_language: Language = Language.MIXED
     greeting_en: str = Field(default="", max_length=1000)
     greeting_hi: str = Field(default="", max_length=1000)
@@ -183,10 +273,10 @@ class OnboardClinicRequest(BaseModel):
     opens_at: time = time(9, 0)
     closes_at: time = time(18, 0)
     working_days: list[int] = Field(default_factory=lambda: [1, 2, 3, 4, 5, 6])
-    slot_duration_minutes: int = Field(default=15, ge=5, le=240)
+    slot_duration_minutes: int | None = Field(default=None, ge=5, le=240)
 
-    doctors: list[DoctorCreate] = Field(default_factory=list)
-    # Created verbatim; if empty, a standard consultation/follow-up pair is added.
+    staff_members: list[StaffMemberCreate] = Field(default_factory=list)
+    # Created verbatim; if empty, the preset's example services are used.
     appointment_types: list[str] = Field(default_factory=list)
 
     # Provision a VAPI assistant from the master template as part of onboarding.
@@ -198,8 +288,8 @@ class OnboardClinicRequest(BaseModel):
         return _validate_working_days(v)
 
 
-class OnboardClinicResponse(BaseModel):
-    clinic: ClinicOut
+class OnboardBusinessResponse(BaseModel):
+    business: BusinessOut
     owner_user_id: str
     vapi_assistant_id: str = ""
     # Steps onboarding could not finish automatically, shown as a checklist.

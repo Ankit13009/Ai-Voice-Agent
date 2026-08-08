@@ -5,11 +5,11 @@ no user token), so two things stand in for that:
 
 1. Every request must carry the shared secret configured on the assistant, and
    it is compared in constant time. Without this, anyone who learns the URL can
-   book, move, and cancel appointments for any clinic.
+   book, move, and cancel appointments for any business.
 
-2. The clinic is resolved from the *call*, never from the tool arguments. The
+2. The business is resolved from the *call*, never from the tool arguments. The
    model relays whatever the caller says, and a caller can say anything, so a
-   `clinic_id` argument would be a prompt-injection path straight through tenant
+   `business_id` argument would be a prompt-injection path straight through tenant
    isolation.
 
 Tool responses are shaped for a model to read aloud, not for a UI: a `status`
@@ -33,10 +33,10 @@ from app.db.models import (
     AppointmentStatus,
     Call,
     CallOutcome,
-    Clinic,
-    Doctor,
+    Business,
+    StaffMember,
     Language,
-    Patient,
+    Customer,
 )
 from app.services import appointments as appointment_service
 from app.services import google_calendar as gcal
@@ -68,8 +68,8 @@ def _verify(secret_header: str | None) -> None:
         raise WebhookSignatureError()
 
 
-async def _resolve_clinic(db, message: dict) -> Clinic | None:
-    """Find the clinic for this call.
+async def _resolve_business(db, message: dict) -> Business | None:
+    """Find the business for this call.
 
     Tries the assistant id first (set when we provisioned the assistant), then
     the dialed number. Both come from VAPI's own call object, not from anything
@@ -79,21 +79,21 @@ async def _resolve_clinic(db, message: dict) -> Clinic | None:
     assistant_id = call.get("assistantId") or message.get("assistant", {}).get("id", "")
 
     if assistant_id:
-        clinic = (
-            await db.execute(select(Clinic).where(Clinic.vapi_assistant_id == assistant_id))
+        business = (
+            await db.execute(select(Business).where(Business.vapi_assistant_id == assistant_id))
         ).scalar_one_or_none()
-        if clinic:
-            return clinic
+        if business:
+            return business
 
     dialed = (call.get("phoneNumber") or {}).get("number") or call.get("phoneNumberId", "")
     if dialed:
-        clinic = (
-            await db.execute(select(Clinic).where(Clinic.phone_number == dialed))
+        business = (
+            await db.execute(select(Business).where(Business.phone_number == dialed))
         ).scalar_one_or_none()
-        if clinic:
-            return clinic
+        if business:
+            return business
 
-    logger.error("Could not resolve a clinic for VAPI call %s", call.get("id", "?"))
+    logger.error("Could not resolve a business for VAPI call %s", call.get("id", "?"))
     return None
 
 
@@ -110,45 +110,45 @@ def _tool_result(status: str, **fields: Any) -> dict[str, Any]:
 # --------------------------------------------------------------------------- #
 # Tool handlers
 # --------------------------------------------------------------------------- #
-async def _handle_check_availability(db, clinic: Clinic, args: dict, caller: str) -> dict:
-    zone = ZoneInfo(clinic.timezone)
+async def _handle_check_availability(db, business: Business, args: dict, caller: str) -> dict:
+    zone = ZoneInfo(business.timezone)
     now = datetime.now(timezone.utc)
 
     date_str = (args.get("date") or "").strip()
     if date_str:
         try:
             day = datetime.strptime(date_str, "%Y-%m-%d").date()
-            start = datetime.combine(day, clinic.opens_at, tzinfo=zone).astimezone(timezone.utc)
-            end = datetime.combine(day, clinic.closes_at, tzinfo=zone).astimezone(timezone.utc)
+            start = datetime.combine(day, business.opens_at, tzinfo=zone).astimezone(timezone.utc)
+            end = datetime.combine(day, business.closes_at, tzinfo=zone).astimezone(timezone.utc)
         except ValueError:
             logger.info("Agent sent an unparseable date %r; falling back to open search.", date_str)
             start, end = now, now + timedelta(days=DEFAULT_SEARCH_DAYS)
     else:
         start, end = now, now + timedelta(days=DEFAULT_SEARCH_DAYS)
 
-    doctor = None
-    doctor_id = (args.get("doctor_id") or "").strip()
-    if doctor_id:
-        doctor = (
+    staff_member = None
+    staff_member_id = (args.get("staff_member_id") or "").strip()
+    if staff_member_id:
+        staff_member = (
             await db.execute(
-                select(Doctor).where(Doctor.id == doctor_id, Doctor.clinic_id == clinic.id)
+                select(StaffMember).where(StaffMember.id == staff_member_id, StaffMember.business_id == business.id)
             )
         ).scalar_one_or_none()
-        if doctor is None:
-            # A hallucinated doctor id must not silently book with the wrong one.
+        if staff_member is None:
+            # A hallucinated staff_member id must not silently book with the wrong one.
             return _tool_result(
                 "not_found",
-                message="I could not find that doctor. Could you say the name again?",
+                message="I could not find that staff_member. Could you say the name again?",
             )
 
     try:
         slots = await gcal.find_available_slots(
-            db, clinic, start=start, end=end, doctor=doctor, limit=40
+            db, business, start=start, end=end, staff_member=staff_member, limit=40
         )
     except AppError as exc:
-        logger.error("Availability lookup failed for clinic %s: %s", clinic.id, exc.message)
+        logger.error("Availability lookup failed for business %s: %s", business.id, exc.message)
         return _tool_result(
-            "error", message="I could not reach the clinic's calendar just now."
+            "error", message="I could not reach the business's calendar just now."
         )
 
     preference = (args.get("preferred_time_of_day") or "any").lower()
@@ -176,16 +176,16 @@ async def _handle_check_availability(db, clinic: Clinic, args: dict, caller: str
                 # The model must echo this verbatim into book_appointment, which
                 # is why it is a full offset-bearing ISO string.
                 "starts_at": s.starts_at.isoformat(),
-                "label": s.label(clinic.timezone),
-                "doctor_id": s.doctor_id or "",
-                "doctor_name": s.doctor_name,
+                "label": s.label(business.timezone),
+                "staff_member_id": s.staff_member_id or "",
+                "staff_member_name": s.staff_member_name,
             }
             for s in offered
         ],
     )
 
 
-async def _handle_book_appointment(db, clinic: Clinic, args: dict, caller: str) -> dict:
+async def _handle_book_appointment(db, business: Business, args: dict, caller: str) -> dict:
     starts_raw = (args.get("starts_at") or "").strip()
     try:
         starts_at = datetime.fromisoformat(starts_raw.replace("Z", "+00:00"))
@@ -195,10 +195,10 @@ async def _handle_book_appointment(db, clinic: Clinic, args: dict, caller: str) 
             "error", message="I did not catch that time correctly. Could you repeat it?"
         )
     if starts_at.tzinfo is None:
-        starts_at = starts_at.replace(tzinfo=ZoneInfo(clinic.timezone))
+        starts_at = starts_at.replace(tzinfo=ZoneInfo(business.timezone))
 
     # Prefer the number given on the call; fall back to the caller ID.
-    phone = (args.get("patient_phone") or "").strip() or caller
+    phone = (args.get("customer_phone") or "").strip() or caller
     if not phone:
         return _tool_result(
             "error", message="I need a phone number to confirm the appointment."
@@ -209,11 +209,11 @@ async def _handle_book_appointment(db, clinic: Clinic, args: dict, caller: str) 
     try:
         appointment = await appointment_service.book_appointment(
             db,
-            clinic,
-            patient_name=(args.get("patient_name") or "").strip(),
-            patient_phone=phone,
+            business,
+            customer_name=(args.get("customer_name") or "").strip(),
+            customer_phone=phone,
             starts_at=starts_at,
-            doctor_id=(args.get("doctor_id") or "").strip() or None,
+            staff_member_id=(args.get("staff_member_id") or "").strip() or None,
             reason=(args.get("reason") or "").strip(),
             language=Language.MIXED,
         )
@@ -221,7 +221,7 @@ async def _handle_book_appointment(db, clinic: Clinic, args: dict, caller: str) 
         if exc.code.value == "SLOT_UNAVAILABLE":
             alternatives = await gcal.find_available_slots(
                 db,
-                clinic,
+                business,
                 start=datetime.now(timezone.utc),
                 end=datetime.now(timezone.utc) + timedelta(days=DEFAULT_SEARCH_DAYS),
                 limit=MAX_SLOTS_TO_OFFER,
@@ -229,63 +229,63 @@ async def _handle_book_appointment(db, clinic: Clinic, args: dict, caller: str) 
             return _tool_result(
                 "unavailable",
                 available=[
-                    {"starts_at": s.starts_at.isoformat(), "label": s.label(clinic.timezone)}
+                    {"starts_at": s.starts_at.isoformat(), "label": s.label(business.timezone)}
                     for s in alternatives
                 ],
                 message="That slot was just taken.",
             )
-        logger.error("Booking failed for clinic %s: %s", clinic.id, exc.message)
+        logger.error("Booking failed for business %s: %s", business.id, exc.message)
         return _tool_result("error", message="I could not complete the booking just now.")
 
     return _tool_result(
         "success",
         appointment_id=appointment.id,
-        when=appointment.starts_at.astimezone(ZoneInfo(clinic.timezone)).strftime(
+        when=appointment.starts_at.astimezone(ZoneInfo(business.timezone)).strftime(
             "%A %d %B, %-I:%M %p"
         ),
         message="The appointment is confirmed and a WhatsApp confirmation is on its way.",
     )
 
 
-async def _handle_find_appointment(db, clinic: Clinic, args: dict, caller: str) -> dict:
-    phone = (args.get("patient_phone") or "").strip() or caller
+async def _handle_find_appointment(db, business: Business, args: dict, caller: str) -> dict:
+    phone = (args.get("customer_phone") or "").strip() or caller
     if phone and not phone.startswith("+"):
         phone = "+" + phone.lstrip("0")
 
-    appointment = await appointment_service.find_patient_appointment(db, clinic.id, phone)
+    appointment = await appointment_service.find_customer_appointment(db, business.id, phone)
     if appointment is None:
         return _tool_result(
             "not_found",
             message="I could not find an upcoming appointment for this number.",
         )
 
-    patient = (
-        await db.execute(select(Patient).where(Patient.id == appointment.patient_id))
+    customer = (
+        await db.execute(select(Customer).where(Customer.id == appointment.customer_id))
     ).scalar_one()
     return _tool_result(
         "success",
         appointment_id=appointment.id,
-        patient_name=patient.name,
-        when=appointment.starts_at.astimezone(ZoneInfo(clinic.timezone)).strftime(
+        customer_name=customer.name,
+        when=appointment.starts_at.astimezone(ZoneInfo(business.timezone)).strftime(
             "%A %d %B, %-I:%M %p"
         ),
     )
 
 
-async def _load_scoped_appointment(db, clinic: Clinic, appointment_id: str) -> Appointment | None:
-    """Load by id *and* clinic, so a hallucinated or guessed id from another
+async def _load_scoped_appointment(db, business: Business, appointment_id: str) -> Appointment | None:
+    """Load by id *and* business, so a hallucinated or guessed id from another
     tenant resolves to nothing rather than to someone else's appointment."""
     return (
         await db.execute(
             select(Appointment).where(
-                Appointment.id == appointment_id, Appointment.clinic_id == clinic.id
+                Appointment.id == appointment_id, Appointment.business_id == business.id
             )
         )
     ).scalar_one_or_none()
 
 
-async def _handle_reschedule(db, clinic: Clinic, args: dict, caller: str) -> dict:
-    appointment = await _load_scoped_appointment(db, clinic, (args.get("appointment_id") or "").strip())
+async def _handle_reschedule(db, business: Business, args: dict, caller: str) -> dict:
+    appointment = await _load_scoped_appointment(db, business, (args.get("appointment_id") or "").strip())
     if appointment is None:
         return _tool_result("not_found", message="I could not find that appointment.")
 
@@ -294,36 +294,36 @@ async def _handle_reschedule(db, clinic: Clinic, args: dict, caller: str) -> dic
     except ValueError:
         return _tool_result("error", message="I did not catch the new time correctly.")
     if starts_at.tzinfo is None:
-        starts_at = starts_at.replace(tzinfo=ZoneInfo(clinic.timezone))
+        starts_at = starts_at.replace(tzinfo=ZoneInfo(business.timezone))
 
     try:
         updated = await appointment_service.reschedule_appointment(
-            db, clinic, appointment, starts_at=starts_at, reason=(args.get("reason") or "").strip()
+            db, business, appointment, starts_at=starts_at, reason=(args.get("reason") or "").strip()
         )
     except AppError as exc:
         if exc.code.value == "SLOT_UNAVAILABLE":
             return _tool_result("unavailable", available=[], message="That new time is not free.")
-        logger.error("Reschedule failed for clinic %s: %s", clinic.id, exc.message)
+        logger.error("Reschedule failed for business %s: %s", business.id, exc.message)
         return _tool_result("error", message="I could not move the appointment just now.")
 
     return _tool_result(
         "success",
         appointment_id=updated.id,
-        when=updated.starts_at.astimezone(ZoneInfo(clinic.timezone)).strftime("%A %d %B, %-I:%M %p"),
+        when=updated.starts_at.astimezone(ZoneInfo(business.timezone)).strftime("%A %d %B, %-I:%M %p"),
     )
 
 
-async def _handle_cancel(db, clinic: Clinic, args: dict, caller: str) -> dict:
-    appointment = await _load_scoped_appointment(db, clinic, (args.get("appointment_id") or "").strip())
+async def _handle_cancel(db, business: Business, args: dict, caller: str) -> dict:
+    appointment = await _load_scoped_appointment(db, business, (args.get("appointment_id") or "").strip())
     if appointment is None:
         return _tool_result("not_found", message="I could not find that appointment.")
 
     try:
         await appointment_service.cancel_appointment(
-            db, clinic, appointment, reason=(args.get("reason") or "").strip()
+            db, business, appointment, reason=(args.get("reason") or "").strip()
         )
     except AppError as exc:
-        logger.error("Cancellation failed for clinic %s: %s", clinic.id, exc.message)
+        logger.error("Cancellation failed for business %s: %s", business.id, exc.message)
         return _tool_result("error", message="I could not cancel the appointment just now.")
 
     return _tool_result("success", message="The appointment has been cancelled.")
@@ -360,7 +360,7 @@ async def handle_tool_call(
     message = body.get("message", {}) or {}
     tool_calls = message.get("toolCallList") or message.get("toolCalls") or []
 
-    clinic = await _resolve_clinic(db, message)
+    business = await _resolve_business(db, message)
     caller = _caller_number(message)
 
     results = []
@@ -377,12 +377,12 @@ async def handle_tool_call(
             except json.JSONDecodeError:
                 arguments = {}
 
-        if clinic is None:
+        if business is None:
             results.append(
                 {
                     "toolCallId": call_id,
                     "result": _tool_result(
-                        "error", message="I am not able to access the clinic system right now."
+                        "error", message="I am not able to access the business system right now."
                     ),
                 }
             )
@@ -397,12 +397,12 @@ async def handle_tool_call(
             continue
 
         try:
-            result = await handler(db, clinic, arguments, caller)
+            result = await handler(db, business, arguments, caller)
             await db.commit()
         except Exception:  # noqa: BLE001
             await db.rollback()
-            logger.exception("Tool %s crashed for clinic %s", name, clinic.id)
-            result = _tool_result("error", message="Something went wrong on the clinic's system.")
+            logger.exception("Tool %s crashed for business %s", name, business.id)
+            result = _tool_result("error", message="Something went wrong on the business's system.")
 
         results.append({"toolCallId": call_id, "result": result})
 
@@ -426,8 +426,8 @@ async def handle_event(
         # status-update and friends are acknowledged and ignored.
         return {"received": True}
 
-    clinic = await _resolve_clinic(db, message)
-    if clinic is None:
+    business = await _resolve_business(db, message)
+    if business is None:
         return {"received": True}
 
     call_payload = message.get("call", {}) or {}
@@ -436,10 +436,10 @@ async def handle_event(
 
     existing = (
         await db.execute(
-            select(Call).where(Call.vapi_call_id == vapi_call_id, Call.clinic_id == clinic.id)
+            select(Call).where(Call.vapi_call_id == vapi_call_id, Call.business_id == business.id)
         )
     ).scalar_one_or_none()
-    call_row = existing or Call(clinic_id=clinic.id, vapi_call_id=vapi_call_id)
+    call_row = existing or Call(business_id=business.id, vapi_call_id=vapi_call_id)
     if existing is None:
         db.add(call_row)
 
@@ -473,15 +473,15 @@ async def handle_event(
     appointment = (
         await db.execute(
             select(Appointment)
-            .join(Patient, Appointment.patient_id == Patient.id)
-            .where(Appointment.clinic_id == clinic.id, Patient.phone == caller)
+            .join(Customer, Appointment.customer_id == Customer.id)
+            .where(Appointment.business_id == business.id, Customer.phone == caller)
             .order_by(Appointment.updated_at.desc())
             .limit(1)
         )
     ).scalar_one_or_none()
 
     if appointment and call_row.started_at and appointment.updated_at >= call_row.started_at:
-        call_row.patient_id = appointment.patient_id
+        call_row.customer_id = appointment.customer_id
         if appointment.status == AppointmentStatus.CANCELLED:
             call_row.outcome = CallOutcome.CANCELLED
         elif appointment.status == AppointmentStatus.RESCHEDULED:
@@ -497,6 +497,6 @@ async def handle_event(
 
     await db.commit()
     logger.info(
-        "Stored call %s for clinic %s (outcome=%s)", vapi_call_id, clinic.id, call_row.outcome
+        "Stored call %s for business %s (outcome=%s)", vapi_call_id, business.id, call_row.outcome
     )
     return {"received": True}

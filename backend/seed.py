@@ -1,12 +1,13 @@
 #!/usr/bin/env python
-"""Create the first superadmin, and optionally a demo clinic to click around in.
+"""Create the first superadmin, and optionally two demo businesses.
 
 Usage:
-    python seed.py --email you@example.com --password 'a-strong-password'
-    python seed.py --email you@example.com --password '...' --demo
+    python seed.py --email you@yourdomain.in --password 'a-strong-password'
+    python seed.py --email you@yourdomain.in --password '...' --demo
 
-The superadmin is the only role that can onboard clinics, so this bootstraps the
-system. Run once per environment.
+The `--demo` businesses are deliberately two *different* trades (a clinic and a
+salon) running on the same code, seeded from their presets. That is the whole
+point of the platform, and it is worth being able to see it side by side.
 """
 
 import argparse
@@ -16,17 +17,18 @@ from datetime import datetime, time, timedelta, timezone
 
 from sqlalchemy import select
 
+from app.agent.presets import get_preset
 from app.core.security import hash_password
 from app.db.models import (
     Appointment,
     AppointmentStatus,
     AppointmentType,
+    Business,
     Call,
     CallOutcome,
-    Clinic,
-    Doctor,
+    Customer,
     Language,
-    Patient,
+    StaffMember,
     User,
     UserRole,
 )
@@ -41,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--demo",
         action="store_true",
-        help="Also create a demo clinic with sample calls and appointments.",
+        help="Also create a demo clinic and a demo salon, to show one codebase serving two trades.",
     )
     return parser.parse_args()
 
@@ -61,7 +63,7 @@ async def create_superadmin(db, args) -> User:
         password_hash=hash_password(args.password),
         full_name=args.name,
         role=UserRole.SUPERADMIN,
-        clinic_id=None,
+        business_id=None,
     )
     db.add(user)
     await db.flush()
@@ -69,148 +71,226 @@ async def create_superadmin(db, args) -> User:
     return user
 
 
-async def create_demo_clinic(db) -> None:
-    existing = (
-        await db.execute(select(Clinic).where(Clinic.slug == "demo-clinic"))
-    ).scalar_one_or_none()
-    if existing:
-        print("Demo clinic already exists; leaving it unchanged.")
-        return
+async def create_business(
+    db,
+    *,
+    business_type: str,
+    name: str,
+    slug: str,
+    phone_number: str,
+    owner_email: str,
+    owner_name: str,
+    address: str,
+    city: str,
+    contact_phone: str,
+    staff: list[tuple[str, str, int]],
+    opens_at: time,
+    closes_at: time,
+) -> Business | None:
+    """Create one tenant, seeded from its business-type preset.
 
-    clinic = Clinic(
+    This mirrors exactly what `POST /api/v1/onboarding/businesses` does, so the
+    demo data cannot drift away from the real onboarding path.
+    """
+    existing = (await db.execute(select(Business).where(Business.slug == slug))).scalar_one_or_none()
+    if existing:
+        print(f"Business '{slug}' already exists; leaving it unchanged.")
+        return None
+
+    preset = get_preset(business_type)
+
+    business = Business(
+        name=name,
+        slug=slug,
+        phone_number=phone_number,
+        address=address,
+        city=city,
+        contact_phone=contact_phone,
+        contact_email=owner_email,
+        timezone="Asia/Kolkata",
+        business_type=preset.slug,
+        business_descriptor=preset.business_descriptor,
+        labels=preset.label_map(),
+        intake_fields=preset.intake_payload(),
+        agent_rules=list(preset.rules),
+        escalation_instructions=preset.escalation,
+        agent_name=preset.default_agent_name,
+        primary_language=Language.MIXED,
+        opens_at=opens_at,
+        closes_at=closes_at,
+        working_days=[1, 2, 3, 4, 5, 6],
+        slot_duration_minutes=preset.default_slot_minutes,
+    )
+    db.add(business)
+    await db.flush()
+
+    db.add(
+        User(
+            email=owner_email,
+            password_hash=hash_password("demo-password-123"),
+            full_name=owner_name,
+            role=UserRole.OWNER,
+            business_id=business.id,
+        )
+    )
+
+    for staff_name, specialization, duration in staff:
+        db.add(
+            StaffMember(
+                business_id=business.id,
+                name=staff_name,
+                specialization=specialization,
+                consultation_duration_minutes=duration,
+            )
+        )
+
+    for service in preset.example_services:
+        db.add(
+            AppointmentType(
+                business_id=business.id,
+                name=service,
+                duration_minutes=preset.default_slot_minutes,
+            )
+        )
+
+    await db.flush()
+    print(f"Created {preset.display_name.lower()} '{name}'  ({owner_email} / demo-password-123)")
+    return business
+
+
+async def add_activity(db, business: Business, samples: list[dict]) -> None:
+    """Give a business some calls and appointments so its dashboard is not empty."""
+    now = datetime.now(timezone.utc)
+    staff = (
+        await db.execute(select(StaffMember).where(StaffMember.business_id == business.id))
+    ).scalars().all()
+
+    for index, sample in enumerate(samples):
+        customer = Customer(
+            business_id=business.id,
+            name=sample["customer_name"],
+            phone=sample["phone"],
+            preferred_language=sample.get("language", Language.MIXED),
+        )
+        db.add(customer)
+        await db.flush()
+
+        call = Call(
+            business_id=business.id,
+            vapi_call_id=f"demo-{business.slug}-{index}",
+            customer_id=customer.id,
+            caller_number=customer.phone,
+            started_at=now - timedelta(hours=index + 1),
+            ended_at=now - timedelta(hours=index + 1) + timedelta(seconds=sample["duration"]),
+            duration_seconds=sample["duration"],
+            language=sample.get("language", Language.MIXED),
+            outcome=CallOutcome.BOOKED,
+            summary=sample["summary"],
+            transcript=sample["transcript"],
+        )
+        db.add(call)
+        await db.flush()
+
+        db.add(
+            Appointment(
+                business_id=business.id,
+                customer_id=customer.id,
+                staff_member_id=staff[index % len(staff)].id if staff else None,
+                call_id=call.id,
+                starts_at=now + timedelta(days=index + 1, hours=2),
+                ends_at=now
+                + timedelta(days=index + 1, hours=2, minutes=business.slot_duration_minutes),
+                status=AppointmentStatus.SCHEDULED,
+                reason=sample["reason"],
+            )
+        )
+
+
+async def create_demo_data(db) -> None:
+    clinic = await create_business(
+        db,
+        business_type="clinic",
         name="Sunrise Multispeciality Clinic",
-        slug="demo-clinic",
+        slug="sunrise-clinic",
         phone_number="+911140001234",
+        owner_email="owner@sunriseclinic.in",
+        owner_name="Dr. Meera Sharma",
         address="21 Nehru Place, New Delhi",
         city="New Delhi",
         contact_phone="+919810012345",
-        contact_email="frontdesk@sunriseclinic.in",
-        timezone="Asia/Kolkata",
-        agent_name="Asha",
-        primary_language=Language.MIXED,
+        staff=[
+            ("Dr. Meera Sharma", "General Physician", 15),
+            ("Dr. Rohit Verma", "Dermatologist", 20),
+        ],
         opens_at=time(9, 0),
         closes_at=time(19, 0),
-        working_days=[1, 2, 3, 4, 5, 6],
-        slot_duration_minutes=15,
     )
-    db.add(clinic)
-    await db.flush()
-
-    owner = User(
-        email="owner@sunriseclinic.in",
-        password_hash=hash_password("demo-password-123"),
-        full_name="Dr. Meera Sharma",
-        role=UserRole.OWNER,
-        clinic_id=clinic.id,
-    )
-    db.add(owner)
-
-    doctors = [
-        Doctor(
-            clinic_id=clinic.id,
-            name="Dr. Meera Sharma",
-            specialization="General Physician",
-            consultation_duration_minutes=15,
-        ),
-        Doctor(
-            clinic_id=clinic.id,
-            name="Dr. Rohit Verma",
-            specialization="Dermatologist",
-            consultation_duration_minutes=20,
-        ),
-    ]
-    for doctor in doctors:
-        db.add(doctor)
-
-    for name, duration in (("First consultation", 30), ("Follow-up", 15)):
-        db.add(AppointmentType(clinic_id=clinic.id, name=name, duration_minutes=duration))
-
-    await db.flush()
-
-    now = datetime.now(timezone.utc)
-    patients = [
-        Patient(
-            clinic_id=clinic.id,
-            name="Anjali Gupta",
-            phone="+919876543210",
-            preferred_language=Language.MIXED,
-        ),
-        Patient(
-            clinic_id=clinic.id,
-            name="Ravi Kumar",
-            phone="+919812345678",
-            preferred_language=Language.HINDI,
-        ),
-    ]
-    for patient in patients:
-        db.add(patient)
-    await db.flush()
-
-    # A couple of calls and appointments so every dashboard page has content.
-    call = Call(
-        clinic_id=clinic.id,
-        vapi_call_id="demo-call-1",
-        patient_id=patients[0].id,
-        caller_number=patients[0].phone,
-        started_at=now - timedelta(hours=3),
-        ended_at=now - timedelta(hours=3) + timedelta(seconds=95),
-        duration_seconds=95,
-        language=Language.MIXED,
-        outcome=CallOutcome.BOOKED,
-        summary="Patient booked a follow-up for a persistent cough.",
-        transcript=(
-            "Asha: नमस्ते, Sunrise Multispeciality Clinic. This is Asha. मैं आपकी क्या मदद कर सकती हूँ?\n"
-            "Caller: Hi, mujhe kal appointment chahiye tha, cough ke liye.\n"
-            "Asha: बिल्कुल. Kal 11:30 या 4:15 खाली है. कौन सा ठीक रहेगा?\n"
-            "Caller: 11:30 theek hai.\n"
-            "Asha: Done. आपका appointment कल 11:30 बजे confirm हो गया है."
-        ),
-    )
-    db.add(call)
-    await db.flush()
-
-    db.add(
-        Appointment(
-            clinic_id=clinic.id,
-            patient_id=patients[0].id,
-            doctor_id=doctors[0].id,
-            call_id=call.id,
-            starts_at=now + timedelta(days=1, hours=2),
-            ends_at=now + timedelta(days=1, hours=2, minutes=15),
-            status=AppointmentStatus.SCHEDULED,
-            reason="Persistent cough",
+    if clinic:
+        await add_activity(
+            db,
+            clinic,
+            [
+                {
+                    "customer_name": "Anjali Gupta",
+                    "phone": "+919876543210",
+                    "duration": 95,
+                    "reason": "Persistent cough",
+                    "summary": "Patient booked a follow-up for a persistent cough.",
+                    "transcript": (
+                        "Asha: नमस्ते, Sunrise Multispeciality Clinic. This is Asha. मैं आपकी क्या मदद कर सकती हूँ?\n"
+                        "Caller: Hi, mujhe kal appointment chahiye tha, cough ke liye.\n"
+                        "Asha: बिल्कुल. Kal 11:30 या 4:15 खाली है. कौन सा ठीक रहेगा?\n"
+                        "Caller: 11:30 theek hai.\n"
+                        "Asha: Done. आपका appointment कल 11:30 बजे confirm हो गया है."
+                    ),
+                }
+            ],
         )
-    )
-    db.add(
-        Appointment(
-            clinic_id=clinic.id,
-            patient_id=patients[1].id,
-            doctor_id=doctors[1].id,
-            starts_at=now + timedelta(days=3),
-            ends_at=now + timedelta(days=3, minutes=20),
-            status=AppointmentStatus.SCHEDULED,
-            reason="Skin rash follow-up",
-        )
-    )
-    db.add(
-        Call(
-            clinic_id=clinic.id,
-            vapi_call_id="demo-call-2",
-            caller_number="+919900011122",
-            started_at=now - timedelta(hours=1),
-            ended_at=now - timedelta(hours=1) + timedelta(seconds=22),
-            duration_seconds=22,
-            language=Language.ENGLISH,
-            outcome=CallOutcome.ENQUIRY,
-            summary="Caller asked about clinic timings on Sunday.",
-            transcript="Asha: Thank you for calling Sunrise. \nCaller: Are you open on Sunday?\nAsha: We are closed on Sundays.",
-        )
-    )
 
-    print("Created demo clinic 'Sunrise Multispeciality Clinic'")
-    print("  Owner login: owner@sunriseclinic.in / demo-password-123")
-    print("  Note: Google Calendar is not connected, so availability and booking")
-    print("        will report the integration as unconfigured until you connect it.")
+    salon = await create_business(
+        db,
+        business_type="salon",
+        name="Glow Studio",
+        slug="glow-studio",
+        phone_number="+911140005678",
+        owner_email="owner@glowstudio.in",
+        owner_name="Priya Nair",
+        address="14 Linking Road, Bandra West, Mumbai",
+        city="Mumbai",
+        contact_phone="+919820011223",
+        staff=[
+            ("Priya Nair", "Senior Stylist", 45),
+            ("Kabir Shah", "Colour Specialist", 90),
+        ],
+        opens_at=time(10, 0),
+        closes_at=time(20, 0),
+    )
+    if salon:
+        await add_activity(
+            db,
+            salon,
+            [
+                {
+                    "customer_name": "Sneha Iyer",
+                    "phone": "+919833344556",
+                    "duration": 78,
+                    "reason": "Hair colour touch-up",
+                    "summary": "Client booked a colour touch-up with Kabir.",
+                    "transcript": (
+                        "Riya: नमस्ते, Glow Studio. This is Riya. मैं आपकी क्या मदद कर सकती हूँ?\n"
+                        "Caller: Hi, colour touch-up karwana tha, Kabir ke saath.\n"
+                        "Riya: Sure. Kabir के पास Saturday 2:00 या 5:30 खाली है.\n"
+                        "Caller: 2 baje perfect hai.\n"
+                        "Riya: Booked. Saturday 2 बजे, WhatsApp पर confirmation आ जाएगा."
+                    ),
+                }
+            ],
+        )
+
+    print()
+    print("Two different trades, one codebase. Compare their Settings pages:")
+    print("  Clinic → 'Patients' / 'Doctors', medical rules, emergency escalation")
+    print("  Salon  → 'Clients'  / 'Stylists', pricing rules, no escalation")
 
 
 async def main() -> None:
@@ -219,9 +299,9 @@ async def main() -> None:
     async with SessionLocal() as db:
         await create_superadmin(db, args)
         if args.demo:
-            await create_demo_clinic(db)
+            await create_demo_data(db)
         await db.commit()
-    print("Seed complete.")
+    print("\nSeed complete.")
 
 
 if __name__ == "__main__":
