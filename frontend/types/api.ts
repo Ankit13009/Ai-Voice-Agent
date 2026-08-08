@@ -465,12 +465,57 @@ export interface GoogleAuthorizeResponse {
 }
 
 // --------------------------------------------------------------------------- //
+// Admin (superadmin only, crosses tenant boundaries)
+// --------------------------------------------------------------------------- //
+export interface AdminBusinessRow {
+  id: string;
+  name: string;
+  slug: string;
+  business_type: string;
+  phone_number: string;
+  city: string;
+  owner_email: string;
+  is_active: boolean;
+  created_at: string;
+  calls_total: number;
+  calls_last_7d: number;
+  appointments_upcoming: number;
+  /** The three things that must all be true before a client is live. */
+  setup: {
+    voice_agent: boolean;
+    google_calendar: boolean;
+    whatsapp: boolean;
+  };
+}
+
+export interface PlatformStats {
+  businesses_total: number;
+  businesses_active: number;
+  businesses_live: number;
+  calls_total: number;
+  appointments_total: number;
+  call_cost_paise: number;
+}
+
+// --------------------------------------------------------------------------- //
 // Onboarding
 // --------------------------------------------------------------------------- //
-export interface OnboardClinicRequest {
+export interface OnboardBusinessRequest {
   name: string;
   slug: string;
   phone_number: string;
+
+  /**
+   * Preset slug from GET /onboarding/business-types. It seeds everything below;
+   * anything supplied explicitly overrides the preset's value.
+   */
+  business_type?: string;
+  business_descriptor?: string;
+  labels?: BusinessLabels;
+  intake_fields?: IntakeField[];
+  agent_rules?: string[];
+  escalation_instructions?: string;
+
   owner_email: string;
   owner_password: string;
   owner_name?: string;
@@ -491,7 +536,7 @@ export interface OnboardClinicRequest {
   create_vapi_assistant?: boolean;
 }
 
-export interface OnboardClinicResponse {
+export interface OnboardBusinessResponse {
   business: Business;
   owner_user_id: string;
   vapi_assistant_id: string;

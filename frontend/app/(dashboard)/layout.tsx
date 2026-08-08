@@ -21,7 +21,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const { user, loading } = useAuth();
 
   useEffect(() => {
-    if (!loading && !user) router.replace("/login");
+    if (loading) return;
+    if (!user) {
+      router.replace("/login");
+    } else if (user.role === "superadmin") {
+      // A superadmin has no tenant, so these pages would 403 on every request.
+      router.replace("/admin");
+    }
   }, [loading, user, router]);
 
   if (loading) {
@@ -33,7 +39,7 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   }
 
   // Render nothing during the redirect rather than flashing the shell.
-  if (!user) return null;
+  if (!user || user.role === "superadmin") return null;
 
   return (
     <LabelProvider>

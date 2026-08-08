@@ -8,6 +8,7 @@
 
 import { api, requestWithMessage, tokenStore } from "./client";
 import type {
+  AdminBusinessRow,
   Appointment,
   AppointmentCancelRequest,
   AppointmentCreateRequest,
@@ -31,12 +32,13 @@ import type {
   LoginPayload,
   LoginRequest,
   MessageListQuery,
-  OnboardClinicRequest,
-  OnboardClinicResponse,
+  OnboardBusinessRequest,
+  OnboardBusinessResponse,
   Customer,
   CustomerDetail,
   CustomerListQuery,
   CustomerUpdateRequest,
+  PlatformStats,
   Slot,
   User,
   WhatsAppMessage,
@@ -147,10 +149,17 @@ export const integrationApi = {
   googleDisconnect: () => api.delete<null>(`${V1}/integrations/google`),
 };
 
+export const adminApi = {
+  listBusinesses: (signal?: AbortSignal) =>
+    api.get<AdminBusinessRow[]>(`${V1}/admin/businesses`, undefined, signal),
+  stats: (signal?: AbortSignal) =>
+    api.get<PlatformStats>(`${V1}/admin/stats`, undefined, signal),
+};
+
 export const onboardingApi = {
   businessTypes: (signal?: AbortSignal) =>
     api.get<BusinessTypePreset[]>(`${V1}/onboarding/business-types`, undefined, signal),
 
-  createClinic: (payload: OnboardClinicRequest) =>
-    api.post<OnboardClinicResponse>(`${V1}/onboarding/businesses`, payload),
+  createBusiness: (payload: OnboardBusinessRequest) =>
+    api.post<OnboardBusinessResponse>(`${V1}/onboarding/businesses`, payload),
 };

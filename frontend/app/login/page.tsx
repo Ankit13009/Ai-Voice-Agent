@@ -18,9 +18,12 @@ export default function LoginPage() {
   const [formError, setFormError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  // An already-signed-in user landing here goes straight to the dashboard.
+  // Superadmins have no tenant, so every business-scoped page would 403.
+  // Send them to the operator area instead.
+  const homeFor = (role: string) => (role === "superadmin" ? "/admin" : "/");
+
   useEffect(() => {
-    if (!sessionLoading && user) router.replace("/");
+    if (!sessionLoading && user) router.replace(homeFor(user.role));
   }, [sessionLoading, user, router]);
 
   async function handleSubmit(event: FormEvent) {
@@ -30,8 +33,8 @@ export default function LoginPage() {
     setFieldErrors({});
 
     try {
-      await login(email.trim(), password);
-      router.replace("/");
+      const signedIn = await login(email.trim(), password);
+      router.replace(homeFor(signedIn.role));
     } catch (error) {
       if (error instanceof ApiError) {
         // Field-level problems go inline; everything else becomes the banner.

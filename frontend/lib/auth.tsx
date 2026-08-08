@@ -28,7 +28,8 @@ interface AuthContextValue {
   user: User | null;
   /** True until the initial session check resolves. Gate rendering on it. */
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
+  /** Returns the signed-in user so callers can route by role. */
+  login: (email: string, password: string) => Promise<User>;
   logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
@@ -79,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     const result = await authApi.login({ email, password });
     setUser(result.user);
+    return result.user;
   }, []);
 
   const logout = useCallback(async () => {
