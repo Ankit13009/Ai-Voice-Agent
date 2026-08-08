@@ -102,6 +102,12 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
             # at runtime, producing a bot that greets you and never hears a word.
             "model": "nova-3",
             "language": "multi",  # Hindi/English code-switching
+            # Phone numbers are the highest-stakes field the agent collects and
+            # the one most often mangled: spoken Hindi digits came back as
+            # "अठहत्तर बेहतर तेहतर" on the first real call. `numerals` transcribes
+            # spoken numbers as digits instead of words.
+            "numerals": True,
+            "smartFormat": True,
         },
         "voice": {**voice, "speed": 1.0},
         "server": {

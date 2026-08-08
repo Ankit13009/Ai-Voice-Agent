@@ -99,8 +99,14 @@ NAME = IntakeField("customer_name", "Full name", True, "Ask for their name early
 PHONE = IntakeField(
     "customer_phone",
     "Phone number",
-    True,
-    "If they say to use the number they are calling from, accept that and move on.",
+    # Not required of the agent: the phone system supplies the caller's number
+    # and the booking tool falls back to it. Asking anyway is the single most
+    # error-prone step in the call, so the agent only asks when the tool says
+    # the number is genuinely missing.
+    False,
+    "Do not ask for this. The phone system already provides it. Only ask if a "
+    "tool tells you the number is missing, or if they want to be called back on "
+    "a different number.",
 )
 REASON = IntakeField(
     "service_reason",
