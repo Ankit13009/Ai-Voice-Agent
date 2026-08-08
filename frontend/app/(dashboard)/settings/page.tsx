@@ -28,6 +28,7 @@ import {
   type Column,
 } from "@/components/ui";
 import type { StaffMember } from "@/types/api";
+import { TestCall } from "@/components/TestCall";
 
 const LANGUAGE_OPTIONS = [
   { value: "hi-en", label: "Hindi + English (recommended)" },
@@ -84,6 +85,7 @@ export default function SettingsPage() {
       />
 
       <div className="flex flex-col gap-4">
+        <TestCall />
         <IntegrationsCard business={business.data} onChange={business.refetch} />
         <AgentCard business={business.data} onSaved={business.refetch} />
         <ScheduleCard business={business.data} onSaved={business.refetch} />

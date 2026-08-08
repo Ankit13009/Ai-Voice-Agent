@@ -445,6 +445,14 @@ export interface DashboardStats {
 // --------------------------------------------------------------------------- //
 // Integrations
 // --------------------------------------------------------------------------- //
+/** Browser test-call config. Only the PUBLIC VAPI key is ever sent here. */
+export interface TestCallConfig {
+  public_key: string;
+  assistant_id: string;
+  agent_name: string;
+  business_name: string;
+}
+
 export interface GoogleCalendarStatus {
   connected: boolean;
   email: string;

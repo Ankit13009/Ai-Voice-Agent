@@ -18,7 +18,7 @@ from app.core.deps import (
     scoped_get,
     write_audit_log,
 )
-from app.core.errors import UpstreamError
+from app.core.errors import IntegrationNotConfiguredError, UpstreamError
 from app.core.response import ok
 from app.db.models import CalendarCredential, Business, StaffMember
 from app.schemas.business import BusinessUpdate, StaffMemberCreate, StaffMemberUpdate
@@ -165,6 +165,43 @@ async def _sync_assistant(db, business: Business) -> str:
 async def get_my_business(business_id: ActiveBusiness, db: DbSession, _user: CurrentUserDep) -> dict:
     business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
     return ok(await _serialize_business(db, business))
+
+
+@router.get("/me/test-call", summary="Config for a browser test call to this agent")
+async def test_call_config(
+    business_id: ActiveBusiness, db: DbSession, _user: CurrentUserDep
+) -> dict:
+    """What the browser needs to talk to this business's agent over WebRTC.
+
+    Only the PUBLIC VAPI key is returned. It can start a web call against an
+    assistant and nothing else, so it is safe in the browser; the private key
+    never leaves the server.
+
+    The assistant id comes from the caller's own tenant row, so a user cannot
+    dial into another business's agent by guessing an id.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
+
+    if not settings.vapi_public_key:
+        raise IntegrationNotConfiguredError(
+            "VAPI is not configured on this server. Add VAPI_PUBLIC_KEY to the backend .env."
+        )
+    if not business.vapi_assistant_id:
+        raise IntegrationNotConfiguredError(
+            "This business has no voice assistant yet. Save settings once to create it."
+        )
+
+    return ok(
+        {
+            "public_key": settings.vapi_public_key,
+            "assistant_id": business.vapi_assistant_id,
+            "agent_name": business.agent_name,
+            "business_name": business.name,
+        }
+    )
 
 
 @router.patch("/me", summary="Update business settings")

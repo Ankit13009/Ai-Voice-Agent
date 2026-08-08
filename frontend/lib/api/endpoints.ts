@@ -25,6 +25,7 @@ import type {
   StaffMember,
   StaffMemberCreateRequest,
   StaffMemberUpdateRequest,
+  TestCallConfig,
   GoogleAuthorizeResponse,
   GoogleCalendarStatus,
   LoginPayload,
@@ -82,6 +83,10 @@ export const dashboardApi = {
 export const businessApi = {
   me: (signal?: AbortSignal) => api.get<Business>(`${V1}/businesses/me`, undefined, signal),
   update: (payload: BusinessUpdateRequest) => api.patch<Business>(`${V1}/businesses/me`, payload),
+
+  /** Public key + assistant id so the browser can talk to this tenant's agent. */
+  testCallConfig: (signal?: AbortSignal) =>
+    api.get<TestCallConfig>(`${V1}/businesses/me/test-call`, undefined, signal),
 
   listDoctors: (signal?: AbortSignal) =>
     api.get<StaffMember[]>(`${V1}/businesses/me/staff`, undefined, signal),

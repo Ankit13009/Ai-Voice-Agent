@@ -56,7 +56,10 @@ class Settings(BaseSettings):
     )
 
     # --- VAPI (voice agent) ---
-    vapi_api_key: str = Field(default="")
+    vapi_api_key: str = Field(default="", description="Private key. Server-side only.")
+    # Safe to expose to the browser: it can only start a web call against an
+    # assistant, not read or modify anything. Powers the dashboard test call.
+    vapi_public_key: str = Field(default="")
     vapi_webhook_secret: str = Field(default="", description="Shared secret on VAPI's server webhook.")
     vapi_phone_number_id: str = Field(default="", description="Default VAPI number id for provisioning.")
 
