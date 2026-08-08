@@ -15,8 +15,15 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
+            // `microphone=(self)` allows this origin and nothing else. An empty
+            // allowlist, `microphone=()`, disables the feature for the page
+            // itself, which silently overrides any permission the user grants
+            // in the browser: getUserMedia fails with NotAllowedError and the
+            // Permissions API reports "denied" no matter what the site settings
+            // say. The browser test call needs the microphone, so it is allowed
+            // for self only; geolocation and camera stay fully disabled.
             key: "Permissions-Policy",
-            value: "geolocation=(), microphone=(), camera=()",
+            value: "geolocation=(), microphone=(self), camera=()",
           },
         ],
       },

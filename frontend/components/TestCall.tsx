@@ -12,6 +12,8 @@ import {
   Card,
   CardBody,
   CardHeader,
+  Field,
+  Select,
   cn,
 } from "@/components/ui";
 
@@ -61,6 +63,24 @@ export function TestCall() {
   const heardUser = useRef(false);
   const [micWarning, setMicWarning] = useState(false);
 
+  // Independent microphone check. When the agent hears nothing, the question is
+  // whether the browser is capturing audio at all or whether it is capturing it
+  // and the call is not carrying it. A level meter answers that in two seconds,
+  // where guessing at permissions can take an hour.
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [deviceId, setDeviceId] = useState("");
+  // The microphone level *as VAPI sees it*. The standalone meter below proves
+  // the browser can hear you; this proves the call can. They can disagree, which
+  // is exactly the failure where the SDK picked a silent virtual input device.
+  const [inCallLevel, setInCallLevel] = useState(0);
+  const [micLevel, setMicLevel] = useState<number | null>(null);
+  const [micError, setMicError] = useState("");
+  // Captured on failure. "I allowed it" usually means the site prompt was
+  // allowed, which is only one of three gates: the page must also be a secure
+  // context, and the browser itself needs OS-level microphone permission.
+  const [micDiagnostics, setMicDiagnostics] = useState<string[]>([]);
+  const micStopRef = useRef<(() => void) | null>(null);
+
   useEffect(() => {
     let active = true;
     businessApi
@@ -108,6 +128,21 @@ export function TestCall() {
     };
   }, []);
 
+  // Device labels are only readable once microphone permission is granted, so
+  // this is refreshed after any successful getUserMedia.
+  const refreshDevices = useCallback(async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      setDevices(all.filter((d) => d.kind === "audioinput" && d.deviceId));
+    } catch {
+      /* nothing we can do; the picker just stays empty */
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshDevices();
+  }, [refreshDevices]);
+
   const appendLine = useCallback((role: "user" | "assistant", text: string) => {
     setTranscript((current) => {
       const last = current[current.length - 1];
@@ -120,25 +155,85 @@ export function TestCall() {
     });
   }, []);
 
+  /**
+   * Force the local microphone on, retrying while the track comes up.
+   *
+   * Goes through Daily's `setLocalAudio` as well as the SDK wrapper: the
+   * wrapper's setMuted is a no-op if the local participant is not ready, while
+   * Daily's call object accepts it and applies it once the track publishes.
+   */
+  const ensureUnmuted = useCallback(async (vapi: any) => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        vapi.setMuted(false);
+        const daily = vapi.getDailyCallObject?.();
+        if (daily) {
+          daily.setLocalAudio(true);
+          if (daily.localAudio()) {
+            setMuted(false);
+            setError((e) => (e.includes("started muted") ? "" : e));
+            return true;
+          }
+        } else if (!vapi.isMuted()) {
+          setMuted(false);
+          return true;
+        }
+      } catch {
+        /* the call may not be ready yet; retry below */
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    setError(
+      "The call is connected but the microphone stayed muted. Try selecting the microphone explicitly above, or test from the VAPI dashboard to confirm the agent itself is fine.",
+    );
+    return false;
+  }, []);
+
   const startCall = useCallback(async () => {
     if (!config) return;
     setError("");
     setTranscript([]);
     setSeconds(0);
     setMicWarning(false);
+    setInCallLevel(0);
     heardUser.current = false;
+
+    // Release the diagnostic microphone stream first. Holding it open while the
+    // call tries to acquire the same device is its own source of failure.
+    micStopRef.current?.();
+    micStopRef.current = null;
+    setMicLevel(null);
+
     setState("connecting");
 
     try {
       const { default: Vapi } = await import("@vapi-ai/web");
-      const vapi = new Vapi(config.public_key);
+
+      // Configure the audio source at construction rather than after the call
+      // starts. Setting it afterwards means the peer connection is negotiated
+      // with whatever the SDK picked by default, and on this machine that can be
+      // a track that carries no audio. `startAudioOff: false` is explicit for
+      // the same reason: a call that begins with the mic disabled looks
+      // identical to a broken microphone from the outside.
+      const vapi = new Vapi(
+        config.public_key,
+        undefined,
+        { alwaysIncludeMicInPermissionPrompt: true },
+        { audioSource: deviceId || true, startAudioOff: false },
+      );
       vapiRef.current = vapi;
 
       // Treat any sign of life as "connected". `call-start` is the intended
       // signal but is not always delivered; the bot speaking is proof enough.
       const markActive = () => setState((s) => (s === "connecting" ? "active" : s));
 
-      vapi.on("call-start", markActive);
+      // Unmute on call-start, not when start() resolves. start() returns as soon
+      // as the call object exists, which is before the local audio track is
+      // published, so an unmute issued there silently does nothing.
+      vapi.on("call-start", () => {
+        markActive();
+        void ensureUnmuted(vapi);
+      });
       vapi.on("call-end", () => {
         setState("idle");
         setAssistantSpeaking(false);
@@ -159,6 +254,20 @@ export function TestCall() {
         }
       });
 
+      // Live microphone level from inside the call. If this stays at zero while
+      // the standalone meter moves, the call is listening to the wrong device.
+      vapi.on("local-volume-level", (volume: number) => {
+        setInCallLevel(Math.min(100, Math.round(volume * 100 * 3)));
+        if (volume > 0.02) heardUser.current = true;
+      });
+
+      // Connection failures are otherwise invisible: the greeting can play while
+      // the upstream leg never establishes.
+      vapi.on("call-start-failed", (e: any) => {
+        setError(`The call failed to connect at stage "${e?.stage}": ${e?.error ?? "unknown"}`);
+        setState("idle");
+      });
+
       vapi.on("error", (err: any) => {
         // The SDK's error shapes vary; keep whatever is human-readable.
         const detail =
@@ -168,6 +277,25 @@ export function TestCall() {
       });
 
       await vapi.start(config.assistant_id);
+
+      // Pin the microphone explicitly. Left to itself the SDK takes the browser
+      // default, which on this machine can be a virtual device that only ever
+      // produces silence.
+      if (deviceId) {
+        try {
+          await vapi.setInputDevicesAsync({ audioDeviceId: deviceId });
+        } catch {
+          /* fall back to the default device */
+        }
+      }
+      void ensureUnmuted(vapi);
+
+      try {
+        await vapi.startLocalAudioLevelObserver(100);
+      } catch {
+        /* the level meter is diagnostic only; the call still works without it */
+      }
+      void refreshDevices();
     } catch (err) {
       setState("idle");
       // A refused microphone is by far the most common failure, and the raw
@@ -183,7 +311,7 @@ export function TestCall() {
         setError((err as Error)?.message || "Could not start the call.");
       }
     }
-  }, [config, appendLine]);
+  }, [config, appendLine, deviceId, refreshDevices, ensureUnmuted]);
 
   const endCall = useCallback(() => {
     // Force idle unconditionally. The SDK's stop() can throw or resolve late,
@@ -196,6 +324,91 @@ export function TestCall() {
     setState("idle");
     setAssistantSpeaking(false);
   }, []);
+
+  const checkMicrophone = useCallback(async () => {
+    setMicError("");
+    if (micStopRef.current) {
+      micStopRef.current();
+      micStopRef.current = null;
+      setMicLevel(null);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const context = new AudioContext();
+      const source = context.createMediaStreamSource(stream);
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      const data = new Uint8Array(analyser.frequencyBinCount);
+
+      let raf = 0;
+      const tick = () => {
+        analyser.getByteTimeDomainData(data);
+        // Peak deviation from silence (128), scaled to 0-100.
+        let peak = 0;
+        for (const v of data) peak = Math.max(peak, Math.abs(v - 128));
+        setMicLevel(Math.min(100, Math.round((peak / 128) * 100 * 2.5)));
+        raf = requestAnimationFrame(tick);
+      };
+      tick();
+
+      void refreshDevices();
+
+      micStopRef.current = () => {
+        cancelAnimationFrame(raf);
+        stream.getTracks().forEach((track) => track.stop());
+        void context.close();
+      };
+    } catch (err) {
+      const name = (err as Error)?.name ?? "";
+
+      // Work out which gate actually failed rather than listing all of them.
+      const lines: string[] = [];
+      lines.push(`Page origin: ${window.location.origin}`);
+      lines.push(
+        window.isSecureContext
+          ? "Secure context: yes"
+          : "Secure context: NO — browsers refuse the microphone on plain http unless the host is localhost or 127.0.0.1",
+      );
+
+      try {
+        const status = await navigator.permissions?.query({
+          name: "microphone" as PermissionName,
+        });
+        if (status) lines.push(`Site permission: ${status.state}`);
+      } catch {
+        lines.push("Site permission: could not be read in this browser");
+      }
+
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const inputs = devices.filter((d) => d.kind === "audioinput");
+        lines.push(`Microphones visible: ${inputs.length}`);
+        // Labels stay blank until permission is actually granted, which is a
+        // reliable tell that the block is above the page level.
+        const named = inputs.filter((d) => d.label).map((d) => d.label);
+        lines.push(
+          named.length
+            ? `Devices: ${named.join(", ")}`
+            : "Device names hidden — the browser has not granted access, so the block is at browser or OS level, not the site prompt",
+        );
+      } catch {
+        lines.push("Could not list audio devices");
+      }
+
+      setMicDiagnostics(lines);
+      setMicError(
+        name === "NotAllowedError"
+          ? "The microphone was blocked. If you already allowed it for this site, the block is one level up: either the browser lacks microphone permission in macOS System Settings, or this page is not a secure context. The details below say which."
+          : name === "NotFoundError"
+            ? "No microphone was found."
+            : (err as Error)?.message || "Could not open the microphone.",
+      );
+    }
+  }, [refreshDevices]);
+
+  useEffect(() => () => micStopRef.current?.(), []);
 
   const toggleMute = useCallback(() => {
     const next = !muted;
@@ -306,6 +519,24 @@ export function TestCall() {
           )}
         </div>
 
+        {state === "active" && (
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-ink-subtle w-28 shrink-0">Your mic, in call</span>
+            <div className="h-2 flex-1 rounded-full bg-surface-sunken overflow-hidden">
+              <div
+                className={cn(
+                  "h-full transition-[width] duration-75",
+                  inCallLevel > 4 ? "bg-success" : "bg-line-strong",
+                )}
+                style={{ width: `${inCallLevel}%` }}
+              />
+            </div>
+            <span className="text-xs tnum text-ink-subtle w-24 shrink-0">
+              {inCallLevel > 4 ? "sending audio" : "silent"}
+            </span>
+          </div>
+        )}
+
         {transcript.length > 0 && (
           <div className="max-h-72 overflow-y-auto rounded-lg bg-surface-sunken p-4 flex flex-col gap-3">
             {transcript.map((line) => (
@@ -319,6 +550,69 @@ export function TestCall() {
             <div ref={transcriptEndRef} />
           </div>
         )}
+
+        <div className="rounded-lg border border-line p-3 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-ink">Microphone check</p>
+              <p className="text-xs text-ink-subtle">
+                Speak and watch the bar. No movement means the browser is not hearing you.
+              </p>
+            </div>
+            <Button variant="secondary" size="sm" onClick={checkMicrophone}>
+              {micLevel === null ? "Check microphone" : "Stop"}
+            </Button>
+          </div>
+
+          {devices.length > 0 && (
+            <Field
+              label="Microphone to use"
+              hint={
+                devices.length > 1
+                  ? "Pick your real microphone. Virtual devices from meeting apps capture silence."
+                  : undefined
+              }
+            >
+              <Select
+                value={deviceId}
+                onChange={(e) => setDeviceId(e.target.value)}
+                placeholder="Browser default"
+                options={devices.map((d, i) => ({
+                  value: d.deviceId,
+                  label: d.label || `Microphone ${i + 1}`,
+                }))}
+              />
+            </Field>
+          )}
+          {micError && (
+            <Alert tone="danger" title="Microphone blocked">
+              <p>{micError}</p>
+              {micDiagnostics.length > 0 && (
+                <ul className="mt-2 flex flex-col gap-0.5 font-mono text-2xs opacity-90">
+                  {micDiagnostics.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              )}
+            </Alert>
+          )}
+          {micLevel !== null && (
+            <div className="flex items-center gap-3">
+              <div className="h-2 flex-1 rounded-full bg-surface-sunken overflow-hidden">
+                <div
+                  className={cn(
+                    "h-full transition-[width] duration-75",
+                    micLevel > 6 ? "bg-success" : "bg-line-strong",
+                  )}
+                  style={{ width: `${micLevel}%` }}
+                />
+              </div>
+              <span className="text-xs tnum text-ink-subtle w-20 shrink-0">
+                {micLevel > 6 ? "hearing you" : "silent"}
+              </span>
+            </div>
+          )}
+        </div>
 
         <p className="text-xs text-ink-subtle">
           This is a browser call, so it sounds better than a real one. A phone line is
