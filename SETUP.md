@@ -34,9 +34,13 @@ ngrok http 8800
 #   PUBLIC_BASE_URL=https://<subdomain>.ngrok-free.app
 ```
 
-Restart the backend, then **save Settings once** in the dashboard. That creates
-the VAPI assistant for that business. The Test call button on Settings goes
-live, and you can talk to the agent.
+Restart the backend, then sign in as a **business owner** (not the superadmin)
+and hit **Save** on any Settings card. That provisions the VAPI assistant for
+that business from the master template, and the Test call button goes live.
+
+> Do not build the assistant by hand in VAPI's dashboard. The platform creates
+> one per client, with that client's prompt, tools, webhook URL and secret
+> already wired. A hand-made assistant has none of those and cannot book.
 
 > The tool webhook only works while ngrok is running and `PUBLIC_BASE_URL`
 > matches the current ngrok URL. Free ngrok URLs change on every restart.

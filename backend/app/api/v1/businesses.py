@@ -10,6 +10,7 @@ import logging
 from fastapi import APIRouter, Request
 from sqlalchemy import select
 
+from app.config import get_settings
 from app.core.deps import (
     ActiveBusiness,
     CurrentUserDep,
@@ -78,8 +79,6 @@ async def _serialize_business(db, business: Business) -> dict:
         )
     ).scalar_one_or_none()
 
-    from app.config import get_settings
-
     settings = get_settings()
 
     return {
@@ -141,21 +140,53 @@ async def _serialize_business(db, business: Business) -> dict:
 
 
 async def _sync_assistant(db, business: Business) -> str:
-    """Re-push the assistant. Returns a warning string, or "" on success.
+    """Create or re-push this business's VAPI assistant.
+
+    Creating when one is missing is what makes "save Settings to retry" work.
+    Onboarding provisions the assistant, but that call can fail (VAPI down, key
+    not yet configured) and degrades to a checklist item; without create-on-save
+    that item would be impossible to action, and a business seeded outside the
+    onboarding flow could never get an agent at all.
 
     A VAPI failure must not roll back a settings save the user just made, so it
-    is surfaced as a message rather than raised.
+    is surfaced as a returned warning rather than raised.
     """
-    if not business.vapi_assistant_id:
-        return ""
+    settings = get_settings()
+    if not settings.vapi_api_key:
+        return " The voice agent was not updated: VAPI is not configured on this server."
+
     staff_members = (
         await db.execute(
-            select(StaffMember).where(StaffMember.business_id == business.id, StaffMember.is_active.is_(True))
+            select(StaffMember).where(
+                StaffMember.business_id == business.id, StaffMember.is_active.is_(True)
+            )
         )
     ).scalars().all()
+
     try:
-        await vapi.update_assistant(business, list(staff_members))
-        return ""
+        if business.vapi_assistant_id:
+            await vapi.update_assistant(business, list(staff_members))
+            return ""
+
+        assistant_id = await vapi.create_assistant(business, list(staff_members))
+        business.vapi_assistant_id = assistant_id
+        await db.flush()
+
+        # Attach the platform's inbound number if one is configured, so a newly
+        # created assistant can actually receive calls rather than sitting idle.
+        if settings.vapi_phone_number_id and not business.vapi_phone_number_id:
+            try:
+                await vapi.attach_phone_number(settings.vapi_phone_number_id, assistant_id)
+                business.vapi_phone_number_id = settings.vapi_phone_number_id
+                await db.flush()
+            except UpstreamError:
+                logger.warning(
+                    "Created assistant %s but could not attach the phone number.", assistant_id
+                )
+                return " The voice agent was created, but the phone number could not be attached."
+
+        logger.info("Created VAPI assistant %s for business %s", assistant_id, business.id)
+        return " The voice agent has been created."
     except UpstreamError:
         logger.exception("Could not sync VAPI assistant for business %s", business.id)
         return " The voice agent could not be updated; it will keep using the previous settings."
@@ -180,8 +211,6 @@ async def test_call_config(
     The assistant id comes from the caller's own tenant row, so a user cannot
     dial into another business's agent by guessing an id.
     """
-    from app.config import get_settings
-
     settings = get_settings()
     business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
 
@@ -221,8 +250,11 @@ async def update_my_business(
         setattr(business, field, value)
     await db.flush()
 
+    # Sync when the agent's wording changed, and also whenever no assistant
+    # exists yet, so any save provisions one. Otherwise a business could only be
+    # rescued by editing a field that happens to be in the prompt.
     warning = ""
-    if PROMPT_AFFECTING_FIELDS & set(changes):
+    if PROMPT_AFFECTING_FIELDS & set(changes) or not business.vapi_assistant_id:
         warning = await _sync_assistant(db, business)
 
     await write_audit_log(
