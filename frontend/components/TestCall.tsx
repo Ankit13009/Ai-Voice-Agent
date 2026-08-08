@@ -55,6 +55,11 @@ export function TestCall() {
   const vapiRef = useRef<any>(null);
   const lineId = useRef(0);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
+  // Whether the agent has ever transcribed the caller. A silent transcriber is
+  // the failure that looks most like "the bot is broken", so it gets its own
+  // warning rather than leaving you talking to something that cannot hear.
+  const heardUser = useRef(false);
+  const [micWarning, setMicWarning] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -76,6 +81,16 @@ export function TestCall() {
     const timer = window.setInterval(() => setSeconds((s) => s + 1), 1000);
     return () => window.clearInterval(timer);
   }, [state]);
+
+  // Surface a transcriber that is not hearing anything, instead of leaving you
+  // to conclude the agent is broken.
+  useEffect(() => {
+    if (state !== "active") return;
+    const check = window.setTimeout(() => {
+      if (!heardUser.current) setMicWarning(true);
+    }, 15000);
+    return () => window.clearTimeout(check);
+  }, [state, seconds === 0]);
 
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -110,6 +125,8 @@ export function TestCall() {
     setError("");
     setTranscript([]);
     setSeconds(0);
+    setMicWarning(false);
+    heardUser.current = false;
     setState("connecting");
 
     try {
@@ -117,18 +134,27 @@ export function TestCall() {
       const vapi = new Vapi(config.public_key);
       vapiRef.current = vapi;
 
-      vapi.on("call-start", () => setState("active"));
+      // Treat any sign of life as "connected". `call-start` is the intended
+      // signal but is not always delivered; the bot speaking is proof enough.
+      const markActive = () => setState((s) => (s === "connecting" ? "active" : s));
+
+      vapi.on("call-start", markActive);
       vapi.on("call-end", () => {
         setState("idle");
         setAssistantSpeaking(false);
       });
-      vapi.on("speech-start", () => setAssistantSpeaking(true));
+      vapi.on("speech-start", () => {
+        markActive();
+        setAssistantSpeaking(true);
+      });
       vapi.on("speech-end", () => setAssistantSpeaking(false));
 
       vapi.on("message", (message: any) => {
         if (message?.type !== "transcript") return;
+        markActive();
         const role = message.role === "assistant" ? "assistant" : "user";
         if (typeof message.transcript === "string" && message.transcript.trim()) {
+          if (role === "user") heardUser.current = true;
           appendLine(role, message.transcript);
         }
       });
@@ -160,13 +186,15 @@ export function TestCall() {
   }, [config, appendLine]);
 
   const endCall = useCallback(() => {
-    setState("ending");
+    // Force idle unconditionally. The SDK's stop() can throw or resolve late,
+    // and a hang-up button that keeps spinning leaves no way out of the call.
     try {
       vapiRef.current?.stop();
     } catch {
       /* already stopped */
     }
     setState("idle");
+    setAssistantSpeaking(false);
   }, []);
 
   const toggleMute = useCallback(() => {
@@ -221,6 +249,14 @@ export function TestCall() {
 
       <CardBody className="flex flex-col gap-4">
         {error && <Alert tone="danger">{error}</Alert>}
+
+        {micWarning && !heardUser.current && (
+          <Alert tone="warning" title="Nothing heard from you yet">
+            The agent is speaking but nothing you say is being transcribed. Check the
+            microphone is not muted, that the browser is using the right input device,
+            and that this tab has microphone permission.
+          </Alert>
+        )}
 
         <div className="flex items-center gap-3">
           {state === "idle" ? (

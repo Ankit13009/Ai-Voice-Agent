@@ -8,8 +8,8 @@ code or the VAPI dashboard.
 
 Provider choices, and why:
 
-* Transcriber: Deepgram nova-2 with `language: multi`, which is Deepgram's
-  code-switching model. Hindi-English switching mid-sentence is the normal case
+* Transcriber: Deepgram nova-3 with `language: multi`, Deepgram's
+  code-switching mode (nova-3 only). Hindi-English switching mid-sentence is the normal case
   for Indian business callers, and a single-language model transcribes the other
   half as noise.
 * Voice: Azure `hi-IN-SwaraNeural` speaks both Hindi and English acceptably in
@@ -96,7 +96,11 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
         },
         "transcriber": {
             "provider": "deepgram",
-            "model": "nova-2",
+            # nova-3 is required: `language: multi` (code-switching) is a nova-3
+            # feature. VAPI does not validate the model/language pair, so
+            # nova-2 + multi is accepted at create time and then silently fails
+            # at runtime, producing a bot that greets you and never hears a word.
+            "model": "nova-3",
             "language": "multi",  # Hindi/English code-switching
         },
         "voice": {**voice, "speed": 1.0},

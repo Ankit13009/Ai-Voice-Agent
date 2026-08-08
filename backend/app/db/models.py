@@ -27,6 +27,41 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
+
+
+class UTCDateTime(TypeDecorator):
+    """A DateTime that is always timezone-aware in Python.
+
+    SQLite has no native timezone support: a value written as aware comes back
+    naive, and every comparison against `datetime.now(timezone.utc)` then raises
+    "can't compare offset-naive and offset-aware datetimes". Postgres does not
+    have this problem, so the bug is invisible in production and fatal in local
+    development, which is the worst possible split.
+
+    Normalising in the type means no call site has to remember. Everything
+    stored is converted to UTC on the way in and returned aware on the way out.
+    """
+
+    impl = DateTime(timezone=True)
+    cache_ok = True
+
+    def process_bind_param(self, value: datetime | None, dialect):  # noqa: ANN001
+        if value is None:
+            return None
+        # A naive value reaching the database is assumed UTC: every writer in
+        # this codebase produces UTC, and guessing local time would silently
+        # shift appointments.
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+
+    def process_result_value(self, value: datetime | None, dialect):  # noqa: ANN001
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 def _uuid() -> str:
@@ -104,10 +139,10 @@ def _enum(enum_cls, **kw):
 
 class TimestampMixin:
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_now, nullable=False
+        UTCDateTime(), default=_now, nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=_now, onupdate=_now, nullable=False
+        UTCDateTime(), default=_now, onupdate=_now, nullable=False
     )
 
 
@@ -227,7 +262,7 @@ class User(Base, TimestampMixin):
     )
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
     business: Mapped["Business | None"] = relationship(back_populates="users")
 
@@ -246,9 +281,9 @@ class RefreshToken(Base):
         ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
     token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    expires_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now)
 
 
 # --------------------------------------------------------------------------- #
@@ -334,8 +369,8 @@ class Call(Base, TenantMixin, TimestampMixin):
     )
 
     caller_number: Mapped[str] = mapped_column(String(32), default="")
-    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, default=0)
 
     language: Mapped[Language] = mapped_column(_enum(Language), default=Language.MIXED)
@@ -379,8 +414,8 @@ class Appointment(Base, TenantMixin, TimestampMixin):
     )
 
     # Always stored in UTC. The business's timezone is applied at the edges only.
-    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    ends_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    starts_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
     status: Mapped[AppointmentStatus] = mapped_column(
         _enum(AppointmentStatus), default=AppointmentStatus.SCHEDULED, index=True
     )
@@ -423,7 +458,7 @@ class CalendarCredential(Base, TenantMixin, TimestampMixin):
     encrypted_refresh_token: Mapped[str] = mapped_column(Text, default="")
     encrypted_access_token: Mapped[str] = mapped_column(Text, default="")
     access_token_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        UTCDateTime(), nullable=True
     )
     scopes: Mapped[list] = mapped_column(JSON, default=list)
     is_connected: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -467,9 +502,9 @@ class WhatsAppMessage(Base, TenantMixin, TimestampMixin):
     payload: Mapped[dict] = mapped_column(JSON, default=dict)
     rendered_preview: Mapped[str] = mapped_column(Text, default="")
 
-    scheduled_for: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    scheduled_for: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    delivered_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
 
     wa_message_id: Mapped[str] = mapped_column(String(128), default="", index=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -497,4 +532,4 @@ class AuditLog(Base):
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     request_id: Mapped[str] = mapped_column(String(64), default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now, index=True)

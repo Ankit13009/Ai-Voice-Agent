@@ -49,6 +49,13 @@ SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
 ]
 
+# Without these two the integration cannot read availability or write an event,
+# so their absence is a failed connection, not a degraded one.
+REQUIRED_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
+
 # Refresh this far before actual expiry, so a token can't die mid-request.
 TOKEN_REFRESH_MARGIN = timedelta(seconds=60)
 HTTP_TIMEOUT = httpx.Timeout(15.0, connect=5.0)
@@ -153,9 +160,24 @@ async def save_credentials(
     cred.encrypted_access_token = encrypt_secret(access_token)
     cred.access_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
     cred.connected_email = email or cred.connected_email
-    cred.scopes = token_payload.get("scope", "").split() or SCOPES
-    cred.is_connected = bool(cred.encrypted_refresh_token)
-    cred.last_error = ""
+    granted = token_payload.get("scope", "").split()
+    cred.scopes = granted or SCOPES
+
+    # Google grants only the scopes registered on the OAuth consent screen and
+    # silently drops the rest. Without this check the connection reports success
+    # and then every availability lookup fails with an opaque 403.
+    missing = [s for s in REQUIRED_SCOPES if s not in granted] if granted else []
+    if missing:
+        cred.is_connected = False
+        cred.last_error = (
+            "Google did not grant calendar access. Add the Calendar scopes to your "
+            "OAuth consent screen in Google Cloud Console, then reconnect."
+        )
+        logger.error("Google granted %s but calendar scopes are missing: %s", granted, missing)
+    else:
+        cred.is_connected = bool(cred.encrypted_refresh_token)
+        cred.last_error = ""
+
     await db.flush()
     return cred
 
@@ -255,8 +277,19 @@ async def _api_request(
         method,
         path,
         response.status_code,
-        response.text[:300],
+        response.text[:600],
     )
+
+    # 403 here is almost always missing scopes rather than an outage. Telling the
+    # user Google is "unavailable" sends them to check a status page instead of
+    # the setting that is actually wrong.
+    if response.status_code == 403 and "scope" in response.text.lower():
+        raise IntegrationNotConfiguredError(
+            "Google did not grant calendar access. Add the Calendar scopes to the "
+            "OAuth consent screen, then disconnect and reconnect Google Calendar.",
+            log_context={"path": path, "business_id": business_id},
+        )
+
     raise UpstreamError(
         "Google Calendar",
         log_context={"status": response.status_code, "path": path, "business_id": business_id},
