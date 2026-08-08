@@ -115,16 +115,52 @@ async def _handle_check_availability(db, business: Business, args: dict, caller:
     now = datetime.now(timezone.utc)
 
     date_str = (args.get("date") or "").strip()
+    requested_day = None
     if date_str:
         try:
-            day = datetime.strptime(date_str, "%Y-%m-%d").date()
-            start = datetime.combine(day, business.opens_at, tzinfo=zone).astimezone(timezone.utc)
-            end = datetime.combine(day, business.closes_at, tzinfo=zone).astimezone(timezone.utc)
+            requested_day = datetime.strptime(date_str, "%Y-%m-%d").date()
+            start = datetime.combine(requested_day, business.opens_at, tzinfo=zone).astimezone(timezone.utc)
+            end = datetime.combine(requested_day, business.closes_at, tzinfo=zone).astimezone(timezone.utc)
         except ValueError:
             logger.info("Agent sent an unparseable date %r; falling back to open search.", date_str)
             start, end = now, now + timedelta(days=DEFAULT_SEARCH_DAYS)
     else:
         start, end = now, now + timedelta(days=DEFAULT_SEARCH_DAYS)
+
+    # A closed day is not a full day. Without this the agent tells the caller
+    # "we are fully booked", which is untrue, and then tries morning, afternoon
+    # and evening in turn against a day the business is shut, burning three tool
+    # calls and a minute of the caller's time.
+    working_days = business.working_days or []
+    if requested_day is not None and working_days and requested_day.isoweekday() not in working_days:
+        next_open = requested_day
+        for _ in range(7):
+            next_open += timedelta(days=1)
+            if next_open.isoweekday() in working_days:
+                break
+
+        open_start = datetime.combine(next_open, business.opens_at, tzinfo=zone).astimezone(timezone.utc)
+        open_end = datetime.combine(next_open, business.closes_at, tzinfo=zone).astimezone(timezone.utc)
+        try:
+            slots = await gcal.find_available_slots(
+                db, business, start=max(open_start, now), end=open_end, limit=MAX_SLOTS_TO_OFFER
+            )
+        except AppError:
+            slots = []
+
+        return _tool_result(
+            "closed",
+            closed_on=requested_day.strftime("%A"),
+            next_open_day=next_open.strftime("%A %d %B"),
+            available=[
+                {"starts_at": s.starts_at.isoformat(), "label": s.label(business.timezone)}
+                for s in slots
+            ],
+            message=(
+                f"The business is closed on {requested_day.strftime('%A')}. "
+                f"The next open day is {next_open.strftime('%A %d %B')}."
+            ),
+        )
 
     staff_member = None
     staff_member_id = (args.get("staff_member_id") or "").strip()

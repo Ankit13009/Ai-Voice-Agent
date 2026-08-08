@@ -198,6 +198,9 @@ Every tool returns a `status` field:
 - "success": the action is done. Confirm it warmly and briefly.
 - "unavailable": the slot was taken. Apologise once, offer the alternatives in the \
 `available` list, and book one of those.
+- "closed": the business is shut that day. Say plainly which day it is closed and \
+offer the next open day from `next_open_day`, with the times in `available`. Do NOT \
+try other times on the closed day, and never say it is fully booked.
 - "not_found": nothing matched. Explain gently and offer to help another way.
 - "error": something went wrong on the business's side. Apologise, take their name and \
 number, and say the office will call back shortly. Never expose technical details.
