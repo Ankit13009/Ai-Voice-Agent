@@ -36,7 +36,13 @@ HTTP_TIMEOUT = httpx.Timeout(20.0, connect=5.0)
 
 # Low-latency default. Phone calls punish slow first tokens far more than they
 # reward marginally better phrasing.
-DEFAULT_MODEL = "claude-haiku-4-5"
+#
+# VAPI validates this against its own allow-list and rejects undated aliases,
+# so the dated model id is required even though the API accepts the alias.
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
+# VAPI rejects assistant names longer than this.
+MAX_ASSISTANT_NAME = 40
 
 VOICE_BY_LANGUAGE = {
     Language.HINDI: {"provider": "azure", "voiceId": "hi-IN-SwaraNeural"},
@@ -55,13 +61,26 @@ def _headers() -> dict[str, str]:
     }
 
 
+def _assistant_name(business: Business) -> str:
+    """A name that fits VAPI's 40-character cap and stays unique.
+
+    Prefers something readable in VAPI's dashboard, then falls back to the slug,
+    which is unique per tenant. Truncating the business name instead would let
+    two similarly-named clients collide onto one name.
+    """
+    preferred = f"{business.name} ({business.slug})"
+    if len(preferred) <= MAX_ASSISTANT_NAME:
+        return preferred
+    return business.slug[:MAX_ASSISTANT_NAME]
+
+
 def build_assistant_payload(business: Business, staff_members: list[StaffMember]) -> dict[str, Any]:
     """The master template, rendered for one business."""
     settings = get_settings()
     voice = VOICE_BY_LANGUAGE.get(business.primary_language, VOICE_BY_LANGUAGE[Language.MIXED])
 
     return {
-        "name": f"{business.name} receptionist ({business.slug})",
+        "name": _assistant_name(business),
         "firstMessage": build_greeting(business),
         # Speak first: a silent pickup makes callers think the line is dead.
         "firstMessageMode": "assistant-speaks-first",
@@ -105,7 +124,7 @@ async def _request(method: str, path: str, json_body: dict | None = None) -> dic
         )
     if response.status_code in (200, 201, 204):
         return response.json() if response.content else {}
-    logger.error("VAPI %s %s failed %s: %s", method, path, response.status_code, response.text[:400])
+    logger.error("VAPI %s %s failed %s: %s", method, path, response.status_code, response.text[:2000])
     raise UpstreamError("VAPI", log_context={"status": response.status_code, "path": path})
 
 
