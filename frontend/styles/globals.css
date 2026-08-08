@@ -1,0 +1,153 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Design tokens.
+ *
+ * This is the single source of colour, radius, shadow, and spacing rhythm for
+ * the whole dashboard. Components reference semantic names (`surface`, `ink`,
+ * `danger`) and never raw values, so a rebrand is a change to this file alone.
+ *
+ * Colours are stored as space-separated RGB channels rather than hex, which is
+ * what lets Tailwind's `<alpha-value>` syntax work: `bg-primary/10` becomes
+ * `rgb(var(--primary) / 0.1)`.
+ *
+ * Palette rationale: a clinical product should read calm and legible, not
+ * branded-loud. The neutrals carry a slight blue cast so they sit next to the
+ * teal primary without looking dirty, and the primary is a deep teal rather
+ * than a saturated blue, which reads medical without tipping into "hospital
+ * software from 2004".
+ */
+
+:root {
+  /* --- Surfaces --- */
+  --canvas: 246 247 249;
+  --surface: 255 255 255;
+  --surface-raised: 255 255 255;
+  --surface-sunken: 241 243 246;
+
+  /* --- Text --- */
+  --ink: 16 24 36;
+  --ink-muted: 84 96 112;
+  --ink-subtle: 128 140 156;
+  --ink-inverse: 255 255 255;
+
+  /* --- Lines --- */
+  --line: 226 231 237;
+  --line-strong: 202 209 218;
+
+  /* --- Brand --- */
+  --primary: 13 111 116;
+  --primary-hover: 10 92 96;
+  --primary-soft: 224 242 242;
+
+  /* --- Semantic --- */
+  --success: 21 128 61;
+  --success-soft: 220 244 228;
+  --warning: 161 98 7;
+  --warning-soft: 253 240 213;
+  --danger: 190 40 48;
+  --danger-hover: 160 30 38;
+  --danger-soft: 254 230 230;
+  --info: 37 99 176;
+  --info-soft: 226 238 252;
+
+  /* --- Shape --- */
+  --radius-sm: 5px;
+  --radius: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+
+  /* --- Elevation. Deliberately shallow: this is a data tool, not a card game. --- */
+  --shadow-xs: 0 1px 2px 0 rgb(16 24 36 / 0.04);
+  --shadow-sm: 0 1px 3px 0 rgb(16 24 36 / 0.06), 0 1px 2px -1px rgb(16 24 36 / 0.04);
+  --shadow-md: 0 4px 12px -2px rgb(16 24 36 / 0.08), 0 2px 4px -2px rgb(16 24 36 / 0.04);
+  --shadow-lg: 0 12px 32px -8px rgb(16 24 36 / 0.16), 0 4px 8px -4px rgb(16 24 36 / 0.06);
+  --shadow-focus: 0 0 0 3px rgb(var(--primary) / 0.22);
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+}
+
+[data-theme="dark"] {
+  --canvas: 12 16 22;
+  --surface: 20 26 34;
+  --surface-raised: 27 34 44;
+  --surface-sunken: 15 20 27;
+
+  --ink: 233 238 244;
+  --ink-muted: 156 167 182;
+  --ink-subtle: 118 130 146;
+  --ink-inverse: 12 16 22;
+
+  --line: 42 52 65;
+  --line-strong: 60 73 90;
+
+  /* Lifted for contrast: the light-mode teal is unreadable on a dark surface. */
+  --primary: 45 178 175;
+  --primary-hover: 74 199 196;
+  --primary-soft: 20 54 56;
+
+  --success: 74 190 116;
+  --success-soft: 20 51 34;
+  --warning: 226 168 62;
+  --warning-soft: 60 44 15;
+  --danger: 240 110 116;
+  --danger-hover: 248 138 143;
+  --danger-soft: 66 26 29;
+  --info: 108 166 240;
+  --info-soft: 22 43 70;
+
+  --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.4);
+  --shadow-md: 0 4px 12px -2px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 12px 32px -8px rgb(0 0 0 / 0.6);
+}
+
+@layer base {
+  * {
+    @apply border-line;
+  }
+
+  html {
+    /* Prevents the layout shifting horizontally when a page grows tall enough
+       to need a scrollbar. */
+    scrollbar-gutter: stable;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans text-base antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* One focus treatment everywhere. Focus is never removed, only restyled:
+     keyboard and screen-reader users depend on it to navigate at all. */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary/50 ring-offset-2 ring-offset-canvas;
+  }
+
+  /* Tabular numerals keep columns of times, counts, and durations aligned. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@layer utilities {
+  /* Wide content (tables, transcripts) scrolls inside its own container so the
+     page body itself never scrolls sideways. */
+  .scroll-x {
+    @apply overflow-x-auto;
+    scrollbar-width: thin;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
