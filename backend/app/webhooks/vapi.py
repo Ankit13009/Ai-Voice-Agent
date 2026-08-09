@@ -236,8 +236,12 @@ async def _handle_book_appointment(db, business: Business, args: dict, caller: s
     # Prefer the number given on the call; fall back to the caller ID.
     phone = (args.get("customer_phone") or "").strip() or caller
     if not phone:
+        # Distinct from "error": nothing is broken, the phone system simply did
+        # not pass a caller ID (browser test calls, withheld numbers). The agent
+        # should ask for one rather than apologise for a fault.
         return _tool_result(
-            "error", message="I need a phone number to confirm the appointment."
+            "need_phone",
+            message="No number was provided by the phone system. Ask the caller for one.",
         )
     if not phone.startswith("+"):
         phone = "+" + phone.lstrip("0")
