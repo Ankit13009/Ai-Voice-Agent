@@ -24,7 +24,7 @@ from typing import Any
 import httpx
 
 from app.config import get_settings
-from app.core.errors import IntegrationNotConfiguredError, UpstreamError
+from app.core.errors import BadRequestError, IntegrationNotConfiguredError, UpstreamError
 from app.agent.prompts import build_greeting, build_system_prompt
 from app.agent.tools import build_vapi_tools
 from app.db.models import Business, StaffMember, Language
@@ -135,6 +135,23 @@ async def _request(method: str, path: str, json_body: dict | None = None) -> dic
     if response.status_code in (200, 201, 204):
         return response.json() if response.content else {}
     logger.error("VAPI %s %s failed %s: %s", method, path, response.status_code, response.text[:2000])
+
+    # A 400 is our request being wrong, not VAPI being down. Reporting it as an
+    # outage sends you to check a status page instead of the field you mistyped.
+    # VAPI's validation messages describe the caller's input, so they are safe to
+    # surface; nothing here echoes a credential.
+    if response.status_code == 400:
+        try:
+            detail = response.json().get("message")
+            if isinstance(detail, list):
+                detail = "; ".join(str(d) for d in detail)
+        except Exception:  # noqa: BLE001
+            detail = None
+        raise BadRequestError(
+            str(detail) if detail else "VAPI rejected the request.",
+            log_context={"path": path},
+        )
+
     raise UpstreamError("VAPI", log_context={"status": response.status_code, "path": path})
 
 
