@@ -62,6 +62,11 @@ class Settings(BaseSettings):
     vapi_public_key: str = Field(default="")
     vapi_webhook_secret: str = Field(default="", description="Shared secret on VAPI's server webhook.")
     vapi_phone_number_id: str = Field(default="", description="Default VAPI number id for provisioning.")
+    # Browser test calls carry no caller ID, because nobody dialled a number. On
+    # a real call the phone system supplies one and the agent never asks. Without
+    # a stand-in, browser testing exercises a branch that production never hits
+    # and hides the flow that actually matters. Development only.
+    test_caller_number: str = Field(default="")
 
     # --- Google Calendar ---
     google_client_id: str = Field(default="")

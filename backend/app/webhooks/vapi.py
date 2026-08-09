@@ -98,8 +98,26 @@ async def _resolve_business(db, message: dict) -> Business | None:
 
 
 def _caller_number(message: dict) -> str:
+    """The number the caller is dialling from.
+
+    Browser test calls (`webCall`) have none: nothing was dialled. A configured
+    stand-in keeps the test path identical to a real call, so testing exercises
+    the flow customers will actually get rather than the "ask for a number"
+    branch that only exists because the test harness lacks caller ID.
+    """
     call = message.get("call", {}) or {}
-    return (call.get("customer") or {}).get("number", "")
+    number = (call.get("customer") or {}).get("number", "")
+    if number:
+        return number
+
+    if call.get("type") == "webCall":
+        from app.config import get_settings
+
+        stand_in = get_settings().test_caller_number
+        if stand_in:
+            logger.info("Browser test call: using the configured stand-in caller number.")
+            return stand_in
+    return ""
 
 
 def _tool_result(status: str, **fields: Any) -> dict[str, Any]:
