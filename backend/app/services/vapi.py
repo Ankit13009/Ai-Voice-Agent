@@ -88,7 +88,7 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
             "provider": "anthropic",
             "model": DEFAULT_MODEL,
             "temperature": 0.4,  # low: this agent follows rules, it does not riff
-            "maxTokens": 300,  # phone replies are one or two sentences
+            "maxTokens": 150,  # one short sentence; every extra word is spoken aloud
             "messages": [
                 {"role": "system", "content": build_system_prompt(business, staff_members)}
             ],
