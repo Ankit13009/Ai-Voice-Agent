@@ -453,6 +453,11 @@ export interface TestCallConfig {
   business_name: string;
 }
 
+export interface OutboundTestCallResult {
+  call_id: string;
+  status: string;
+}
+
 export interface GoogleCalendarStatus {
   connected: boolean;
   email: string;

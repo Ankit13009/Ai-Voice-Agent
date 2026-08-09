@@ -13,6 +13,7 @@ import {
   CardBody,
   CardHeader,
   Field,
+  Input,
   Select,
   cn,
 } from "@/components/ui";
@@ -74,6 +75,10 @@ export function TestCall() {
   // is exactly the failure where the SDK picked a silent virtual input device.
   const [inCallLevel, setInCallLevel] = useState(0);
   const [micLevel, setMicLevel] = useState<number | null>(null);
+  const [phone, setPhone] = useState("");
+  const [dialing, setDialing] = useState(false);
+  const [dialResult, setDialResult] = useState("");
+  const [dialError, setDialError] = useState("");
   const [micError, setMicError] = useState("");
   // Captured on failure. "I allowed it" usually means the site prompt was
   // allowed, which is only one of three gates: the page must also be a secure
@@ -410,6 +415,22 @@ export function TestCall() {
 
   useEffect(() => () => micStopRef.current?.(), []);
 
+  const callMyPhone = useCallback(async () => {
+    setDialing(true);
+    setDialResult("");
+    setDialError("");
+    try {
+      const { data, message } = await businessApi.outboundTestCall(phone.trim());
+      setDialResult(message || `Calling ${phone}. Call id ${data.call_id.slice(0, 8)}.`);
+    } catch (err) {
+      setDialError(
+        err instanceof ApiError ? err.message : "Could not place the call.",
+      );
+    } finally {
+      setDialing(false);
+    }
+  }, [phone]);
+
   const toggleMute = useCallback(() => {
     const next = !muted;
     setMuted(next);
@@ -612,6 +633,39 @@ export function TestCall() {
               </span>
             </div>
           )}
+        </div>
+
+        <div className="rounded-lg border border-line p-3 flex flex-col gap-3">
+          <div>
+            <p className="text-sm font-medium text-ink">Or call a real phone</p>
+            <p className="text-xs text-ink-subtle">
+              Rings your mobile so you can hear the agent over an actual phone line.
+              This is the only way to judge Hindi accuracy and latency honestly, since
+              a browser call is clean wideband audio. Each press costs a few rupees.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-end gap-2">
+            <Field label="Number to ring" className="flex-1 min-w-[14rem]">
+              <Input
+                value={phone}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setPhone(e.target.value)}
+                placeholder="+919876543210"
+                inputMode="tel"
+              />
+            </Field>
+            <Button
+              variant="secondary"
+              onClick={callMyPhone}
+              loading={dialing}
+              disabled={!/^\+[1-9]\d{7,14}$/.test(phone.trim())}
+            >
+              Call my phone
+            </Button>
+          </div>
+
+          {dialResult && <Alert tone="success">{dialResult}</Alert>}
+          {dialError && <Alert tone="danger">{dialError}</Alert>}
         </div>
 
         <p className="text-xs text-ink-subtle">

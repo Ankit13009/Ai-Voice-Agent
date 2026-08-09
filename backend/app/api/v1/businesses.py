@@ -8,6 +8,7 @@ call instead of leaving the agent quoting last week's timings.
 import logging
 
 from fastapi import APIRouter, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -230,6 +231,71 @@ async def test_call_config(
             "agent_name": business.agent_name,
             "business_name": business.name,
         }
+    )
+
+
+class OutboundTestCallRequest(BaseModel):
+    """Where to ring. Validated here because a typo becomes a real, billed call."""
+
+    phone_number: str = Field(
+        ..., pattern=r"^\+[1-9]\d{7,14}$", description="E.164, e.g. +919876543210."
+    )
+
+
+@router.post("/me/test-call/outbound", summary="Ring a phone with this business's agent")
+async def outbound_test_call(
+    payload: OutboundTestCallRequest,
+    business_id: ActiveBusiness,
+    db: DbSession,
+    request: Request,
+    _owner: RequireOwner,
+) -> dict:
+    """Place a real outbound call so the agent can be tested on a phone line.
+
+    Owner-only: this spends money on every press, unlike the browser test call.
+    """
+    settings = get_settings()
+    business = (await db.execute(select(Business).where(Business.id == business_id))).scalar_one()
+
+    if not settings.vapi_api_key:
+        raise IntegrationNotConfiguredError("VAPI is not configured on this server.")
+    if not business.vapi_assistant_id:
+        raise IntegrationNotConfiguredError(
+            "This business has no voice agent yet. Save settings once to create it."
+        )
+
+    # Prefer the configured number, otherwise take the first on the account, so
+    # this works immediately after buying one without another config step.
+    phone_number_id = business.vapi_phone_number_id or settings.vapi_phone_number_id
+    if not phone_number_id:
+        numbers = await vapi.list_phone_numbers()
+        if not numbers:
+            raise IntegrationNotConfiguredError(
+                "No phone number on the VAPI account. Buy one in the VAPI dashboard "
+                "under Phone Numbers, then try again."
+            )
+        phone_number_id = numbers[0]["id"]
+
+    call = await vapi.start_outbound_call(
+        assistant_id=business.vapi_assistant_id,
+        phone_number_id=phone_number_id,
+        to_number=payload.phone_number,
+    )
+
+    await write_audit_log(
+        db,
+        request,
+        action="business.outbound_test_call",
+        business_id=business_id,
+        resource_type="call",
+        resource_id=call.get("id", ""),
+        metadata={"to": payload.phone_number},
+    )
+    await db.commit()
+
+    return ok(
+        {"call_id": call.get("id", ""), "status": call.get("status", "queued")},
+        message=f"Calling {payload.phone_number} now. Answer to talk to {business.agent_name}.",
     )
 
 

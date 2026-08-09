@@ -34,6 +34,7 @@ import type {
   MessageListQuery,
   OnboardBusinessRequest,
   OnboardBusinessResponse,
+  OutboundTestCallResult,
   Customer,
   CustomerDetail,
   CustomerListQuery,
@@ -87,6 +88,12 @@ export const businessApi = {
   update: (payload: BusinessUpdateRequest) => api.patch<Business>(`${V1}/businesses/me`, payload),
 
   /** Public key + assistant id so the browser can talk to this tenant's agent. */
+  /** Rings a real phone with this business's agent. Costs money per press. */
+  outboundTestCall: (phone_number: string) =>
+    api.post<OutboundTestCallResult>(`${V1}/businesses/me/test-call/outbound`, {
+      phone_number,
+    }),
+
   testCallConfig: (signal?: AbortSignal) =>
     api.get<TestCallConfig>(`${V1}/businesses/me/test-call`, undefined, signal),
 

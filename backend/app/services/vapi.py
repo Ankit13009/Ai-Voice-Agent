@@ -178,3 +178,33 @@ async def delete_assistant(assistant_id: str) -> None:
     except UpstreamError:
         # Cleanup path: a failure here should not block deactivating a business.
         logger.warning("Could not delete VAPI assistant %s.", assistant_id)
+
+
+# --------------------------------------------------------------------------- #
+# Outbound calls (testing)
+# --------------------------------------------------------------------------- #
+async def list_phone_numbers() -> list[dict]:
+    """Numbers on the VAPI account, so a test call can pick one automatically."""
+    data = await _request("GET", "/phone-number")
+    return data if isinstance(data, list) else []
+
+
+async def start_outbound_call(
+    *, assistant_id: str, phone_number_id: str, to_number: str
+) -> dict:
+    """Ring `to_number` with this business's agent.
+
+    Used to test on a real phone line without owning an inbound Indian number.
+    Worth being clear about what this does and does not prove: the audio path,
+    narrowband quality and latency are real, but the call originates from a US
+    number, so it validates the agent rather than the product a customer would
+    actually dial.
+    """
+    payload = {
+        "assistantId": assistant_id,
+        "phoneNumberId": phone_number_id,
+        "customer": {"number": to_number},
+    }
+    data = await _request("POST", "/call", payload)
+    logger.info("Started outbound test call to %s (id=%s)", to_number, data.get("id"))
+    return data
