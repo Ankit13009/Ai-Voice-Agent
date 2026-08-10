@@ -52,19 +52,13 @@ def build_greeting(business: Business) -> str:
     # being announced rather than a person answering the phone, and callers hear
     # it as a recording.
     if business.primary_language == Language.HINDI:
-        return (
-            f"नमस्ते, मैं {business.name} से {business.agent_name} बोल रही हूँ। "
-            "बताइए, मैं आपकी क्या मदद कर सकती हूँ?"
-        )
+        return f"नमस्ते, {business.name} से {business.agent_name}। बताइए?"
     if business.primary_language == Language.MIXED:
-        return (
-            f"नमस्ते, मैं {business.name} से {business.agent_name} बोल रही हूँ। "
-            "मैं आपकी क्या मदद कर सकती हूँ?"
-        )
-    return (
-        f"Thank you for calling {business.name}, this is {business.agent_name} speaking. "
-        "How can I help you today?"
-    )
+        # Measured at 6.2 seconds spoken, before the caller has said anything.
+        # Still says who and where she is, which is the point of a greeting, but
+        # drops the formal construction that added two seconds to every call.
+        return f"नमस्ते, {business.name} से {business.agent_name}। कैसे मदद करूँ?"
+    return f"{business.name}, this is {business.agent_name}. How can I help?"
 
 
 def _staff_block(business: Business, staff: list[StaffMember]) -> str:
@@ -195,7 +189,10 @@ def build_system_prompt(business: Business, staff: list[StaffMember] | None = No
 This is a live phone call. Every extra second costs the business money and the
 caller patience.
 
-- One short sentence per reply. Two only when reading out times.
+- One short sentence per reply. Two only when reading out times. You are
+  speaking, not writing: every word costs the caller a second of their day.
+- Never explain a negative before giving the alternative. Not "10 is not
+  available, but 9, 9:15 or 9:30 are free" — just "नौ, सवा नौ, या साढ़े नौ?"
 - Answer their question before asking your own. Ignoring a question to ask yours
   is the fastest way to sound like a machine.
 - A brief "जी" or "sure", then straight to the point. Warm, not chatty.

@@ -88,7 +88,10 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
             "provider": "anthropic",
             "model": DEFAULT_MODEL,
             "temperature": 0.4,  # low: this agent follows rules, it does not riff
-            "maxTokens": 150,  # one short sentence; every extra word is spoken aloud
+            # Measured on a real call: the agent spoke for 28 of 58 seconds, more
+            # than it spent waiting. 150 tokens is roughly 12 seconds of Hindi
+            # speech, so the ceiling was never the constraint the comment claimed.
+            "maxTokens": 80,
             "messages": [
                 {"role": "system", "content": build_system_prompt(business, staff_members)}
             ],
@@ -109,7 +112,12 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
             "numerals": True,
             "smartFormat": True,
         },
-        "voice": {**voice, "speed": 1.0},
+        # Azure's default pace is unhurried for a phone call, where the caller
+        # wants an answer rather than a performance. 1.15 is noticeably brisker
+        # while still clearly articulated in Hindi; past about 1.25 the digits in
+        # a time ("नौ बजकर पैंतालीस") start to blur, which costs a re-ask and
+        # therefore more time than it saved.
+        "voice": {**voice, "speed": 1.15},
         "server": {
             "url": f"{settings.public_base_url.rstrip('/')}/webhooks/vapi/events",
             "secret": settings.vapi_webhook_secret,
