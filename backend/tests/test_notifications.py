@@ -143,12 +143,23 @@ async def test_daily_summary_is_sent_once_per_day(session_factory, tenants, monk
         customer = Customer(business_id=business.id, name="Someone", phone="+919000000010")
         db.add(customer)
         await db.flush()
+
+        # Midday in the business's own timezone, not "two hours from now". The
+        # summary counts appointments falling inside today's *local* day, so a
+        # relative offset run late in the evening lands on tomorrow, today's
+        # count is zero, and the dead-day guard correctly sends nothing. That
+        # made this test fail every night after roughly 22:00 IST.
+        from zoneinfo import ZoneInfo
+
+        local_noon = datetime.now(ZoneInfo(business.timezone)).replace(
+            hour=12, minute=0, second=0, microsecond=0
+        )
         db.add(
             Appointment(
                 business_id=business.id,
                 customer_id=customer.id,
-                starts_at=datetime.now(timezone.utc) + timedelta(hours=2),
-                ends_at=datetime.now(timezone.utc) + timedelta(hours=2, minutes=15),
+                starts_at=local_noon.astimezone(timezone.utc),
+                ends_at=(local_noon + timedelta(minutes=15)).astimezone(timezone.utc),
                 status=AppointmentStatus.SCHEDULED,
             )
         )
