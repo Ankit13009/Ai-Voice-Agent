@@ -65,6 +65,9 @@ PROMPT_AFFECTING_FIELDS = {
     "intake_fields",
     "agent_rules",
     "escalation_instructions",
+    # Adds or removes the transferCall tool on the assistant.
+    "handoff_enabled",
+    "handoff_phone",
 }
 
 
@@ -122,6 +125,12 @@ async def _serialize_business(db, business: Business) -> dict:
         "intake_fields": business.intake_fields or [],
         "agent_rules": business.agent_rules or [],
         "escalation_instructions": business.escalation_instructions,
+        "handoff_enabled": business.handoff_enabled,
+        "handoff_phone": business.handoff_phone,
+        "owner_notify_phone": business.owner_notify_phone,
+        "notify_on_booking": business.notify_on_booking,
+        "daily_summary_enabled": business.daily_summary_enabled,
+        "daily_summary_hour": business.daily_summary_hour,
         "agent_name": business.agent_name,
         "phone_number": business.phone_number,
         "primary_language": business.primary_language.value,

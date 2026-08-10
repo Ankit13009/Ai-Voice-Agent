@@ -126,6 +126,16 @@ async def reminder_loop(stop_event: asyncio.Event) -> None:
         except Exception:  # noqa: BLE001
             logger.exception("Reminder loop iteration failed; continuing.")
 
+        # Daily summaries are checked every tick, not daily: each business sends
+        # at its own local hour, and the send is guarded by a stored date so a
+        # restart cannot double-send.
+        try:
+            from app.services.notifications import send_due_daily_summaries
+
+            await send_due_daily_summaries()
+        except Exception:  # noqa: BLE001
+            logger.exception("Daily summary run failed; continuing.")
+
         # Piggyback the daily retention sweep on this loop. A failure here must
         # not stop reminders, which are time-critical; retention is not.
         elapsed = asyncio.get_running_loop().time() - last_retention

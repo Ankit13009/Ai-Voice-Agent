@@ -184,12 +184,55 @@ CANCEL_APPOINTMENT = {
     },
 }
 
+LOOKUP_CALLER = {
+    "type": "function",
+    "function": {
+        "name": "lookup_caller",
+        "description": (
+            "Look up who is calling, from the number they are calling from. Call "
+            "this ONCE, immediately after your greeting, before asking anything. "
+            "If it returns a name, use it and do not ask for their name again."
+        ),
+        "parameters": {"type": "object", "properties": {}, "required": []},
+    },
+}
+
+JOIN_WAITLIST = {
+    "type": "function",
+    "function": {
+        "name": "join_waitlist",
+        "description": (
+            "Put the caller on the waiting list when nothing suitable is free. "
+            "Offer this instead of ending the call empty-handed: they will be "
+            "messaged if a slot opens in the window they wanted."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "customer_name": {"type": "string", "description": "The {customer_singular}'s name."},
+                "date_from": {
+                    "type": "string",
+                    "description": "Earliest date they would accept, YYYY-MM-DD in the business's local date.",
+                },
+                "date_to": {
+                    "type": "string",
+                    "description": "Latest date they would accept, YYYY-MM-DD. Use the same day as date_from if they only want one day.",
+                },
+                "reason": {"type": "string", "description": "Short reason for the visit."},
+            },
+            "required": ["customer_name", "date_from", "date_to"],
+        },
+    },
+}
+
 ALL_TOOLS = [
+    LOOKUP_CALLER,
     CHECK_AVAILABILITY,
     BOOK_APPOINTMENT,
     FIND_APPOINTMENT,
     RESCHEDULE_APPOINTMENT,
     CANCEL_APPOINTMENT,
+    JOIN_WAITLIST,
 ]
 
 
@@ -235,4 +278,31 @@ def build_vapi_tools(business: "Business | None" = None) -> list[dict[str, Any]]
     )
 
     url = _server_url()
-    return [{**_fill_labels(tool, labels), "server": {"url": url}} for tool in ALL_TOOLS]
+    tools: list[dict[str, Any]] = [
+        {**_fill_labels(tool, labels), "server": {"url": url}} for tool in ALL_TOOLS
+    ]
+
+    # Handing off to a human is VAPI's own transferCall tool rather than one of
+    # ours: the call has to be physically moved, which a webhook response cannot
+    # do. Only added when the business has somewhere to transfer to, so the agent
+    # is never told it can do something that would then fail.
+    if business is not None and business.handoff_enabled:
+        destination = business.handoff_phone or business.contact_phone
+        if destination:
+            tools.append(
+                {
+                    "type": "transferCall",
+                    "destinations": [
+                        {
+                            "type": "number",
+                            "number": destination,
+                            "message": (
+                                "Main aapko abhi reception se connect kar rahi hoon, "
+                                "ek moment."
+                            ),
+                        }
+                    ],
+                }
+            )
+
+    return tools

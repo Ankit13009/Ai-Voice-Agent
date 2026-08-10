@@ -258,6 +258,11 @@ async def book_appointment(
 
     await _queue_appointment_messages(db, business, customer, appointment)
 
+    # Tell the owner. Failing to notify must never fail the booking itself.
+    from app.services.notifications import notify_owner_of_booking
+
+    await notify_owner_of_booking(db, business, appointment, customer)
+
     logger.info(
         "Booked appointment %s for business %s at %s", appointment.id, business.id, starts_at
     )
@@ -356,6 +361,18 @@ async def cancel_appointment(
             kind=MessageKind.CANCELLATION,
             scheduled_for=datetime.now(timezone.utc),
         )
+
+    # A cancellation frees a slot, which is exactly what somebody on the
+    # waitlist asked for. Doing this here means every cancellation path benefits,
+    # whether it came from the dashboard, the agent, or a WhatsApp reply.
+    try:
+        from app.services.notifications import notify_waitlist_for_freed_slot
+
+        await notify_waitlist_for_freed_slot(
+            db, business, appointment.starts_at, appointment.ends_at
+        )
+    except Exception:  # noqa: BLE001
+        logger.exception("Waitlist notification failed for appointment %s", appointment.id)
 
     logger.info("Cancelled appointment %s for business %s", appointment.id, business.id)
     return appointment

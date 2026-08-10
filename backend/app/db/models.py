@@ -25,6 +25,7 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -115,6 +116,11 @@ class MessageKind(StrEnum):
     REMINDER_2H = "reminder_2h"
     CANCELLATION = "cancellation"
     RESCHEDULE = "reschedule"
+    # To the business owner, not the customer.
+    OWNER_BOOKING_ALERT = "owner_booking_alert"
+    OWNER_DAILY_SUMMARY = "owner_daily_summary"
+    # To a customer whose waitlisted window has opened up.
+    WAITLIST_SLOT_OPEN = "waitlist_slot_open"
 
 
 class MessageStatus(StrEnum):
@@ -224,13 +230,32 @@ class Business(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 
+    # --- Human handoff ---
+    # The most common objection from a business is "what if the AI cannot help?".
+    # Without a number to fall back to, the honest answer is "the caller is
+    # stuck", so this is part of the product rather than a nicety.
+    handoff_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    # Where to transfer to. Falls back to contact_phone when empty.
+    handoff_phone: Mapped[str] = mapped_column(String(32), default="", server_default="")
+
+    # --- Owner notifications ---
+    # A WhatsApp to the owner on each booking. Its real job is retention: during
+    # a trial the owner is deciding whether this thing is working, and silence
+    # feels like nothing is happening.
+    owner_notify_phone: Mapped[str] = mapped_column(String(32), default="", server_default="")
+    notify_on_booking: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    daily_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    # Local hour to send the summary, in the business's own timezone.
+    daily_summary_hour: Mapped[int] = mapped_column(Integer, default=9, server_default=text("9"))
+    last_daily_summary_on: Mapped[str] = mapped_column(String(10), default="", server_default="")
+
     # --- Data retention ---
     # Call transcripts and recordings of a clinic are health data. Keeping them
     # forever because nobody chose a number is the default that causes trouble,
     # so a default is chosen here and is editable per business. 0 means keep
     # indefinitely, which a business must opt into rather than fall into.
-    transcript_retention_days: Mapped[int] = mapped_column(Integer, default=365)
-    recording_retention_days: Mapped[int] = mapped_column(Integer, default=90)
+    transcript_retention_days: Mapped[int] = mapped_column(Integer, default=365, server_default=text("365"))
+    recording_retention_days: Mapped[int] = mapped_column(Integer, default=90, server_default=text("90"))
 
     users: Mapped[list["User"]] = relationship(back_populates="business")
     staff_members: Mapped[list["StaffMember"]] = relationship(back_populates="business")
@@ -276,10 +301,10 @@ class User(Base, TimestampMixin):
     # Rate limiting alone is per-process and keyed by IP, so it neither survives
     # a restart nor stops an attacker rotating addresses. Locking the account
     # itself is the control that actually binds to the thing being attacked.
-    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     # Set when an owner resets this user's password; forces a change at next login.
-    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
 
     business: Mapped["Business | None"] = relationship(back_populates="users")
 
@@ -454,6 +479,41 @@ class Appointment(Base, TenantMixin, TimestampMixin):
 # --------------------------------------------------------------------------- #
 # Integrations
 # --------------------------------------------------------------------------- #
+class WaitlistEntry(Base, TenantMixin, TimestampMixin):
+    """Someone who wanted a slot that was not available.
+
+    Turns a lost call into a booking: when a cancellation frees a slot, the
+    people waiting for that window are messaged in the order they asked. It is
+    also a number worth quoting in a sales conversation, because "we recovered
+    N appointments you would otherwise have lost" is concrete.
+    """
+
+    __tablename__ = "waitlist_entries"
+    __table_args__ = (
+        Index("ix_waitlist_business_status", "business_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    customer_id: Mapped[str] = mapped_column(
+        ForeignKey("customers.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    staff_member_id: Mapped[str | None] = mapped_column(
+        ForeignKey("staff_members.id", ondelete="SET NULL"), nullable=True
+    )
+    # The window they asked for, so a freed slot can be matched against it.
+    preferred_from: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    preferred_to: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False)
+    reason: Mapped[str] = mapped_column(Text, default="")
+    # waiting | notified | booked | expired
+    status: Mapped[str] = mapped_column(String(20), default="waiting", index=True)
+    notified_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    customer: Mapped["Customer"] = relationship()
+
+
 class CalendarCredential(Base, TenantMixin, TimestampMixin):
     """Google OAuth credentials for one business.
 

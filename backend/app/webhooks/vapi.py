@@ -387,12 +387,114 @@ async def _handle_cancel(db, business: Business, args: dict, caller: str) -> dic
     return _tool_result("success", message="The appointment has been cancelled.")
 
 
+async def _handle_lookup_caller(db, business: Business, args: dict, caller: str) -> dict:
+    """Tell the agent who is calling, so it does not ask a returning customer
+    for a name the business already has.
+
+    Called once immediately after the greeting. The greeting itself is a static
+    string spoken while this runs, so the lookup costs no perceptible time.
+    """
+    if not caller:
+        return _tool_result("not_found", message="No caller ID available.")
+
+    customer = (
+        await db.execute(
+            select(Customer).where(
+                Customer.business_id == business.id, Customer.phone == caller
+            )
+        )
+    ).scalar_one_or_none()
+
+    if customer is None or not customer.name:
+        return _tool_result("not_found", message="This number has not called before.")
+
+    upcoming = (
+        await db.execute(
+            select(Appointment)
+            .where(
+                Appointment.business_id == business.id,
+                Appointment.customer_id == customer.id,
+                Appointment.status.in_(
+                    [AppointmentStatus.SCHEDULED, AppointmentStatus.RESCHEDULED]
+                ),
+                Appointment.starts_at > datetime.now(timezone.utc),
+            )
+            .order_by(Appointment.starts_at.asc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    result = {
+        "customer_name": customer.name,
+        "first_name": customer.name.split()[0],
+    }
+    if upcoming:
+        result["existing_appointment_id"] = upcoming.id
+        result["existing_appointment_when"] = upcoming.starts_at.astimezone(
+            ZoneInfo(business.timezone)
+        ).strftime("%A %d %B, %-I:%M %p")
+
+    return _tool_result("success", **result)
+
+
+async def _handle_join_waitlist(db, business: Business, args: dict, caller: str) -> dict:
+    from app.db.models import WaitlistEntry
+
+    phone = caller
+    if phone and not phone.startswith("+"):
+        phone = "+" + phone.lstrip("0")
+    if not phone:
+        return _tool_result("need_phone", message="No number was provided by the phone system.")
+
+    zone = ZoneInfo(business.timezone)
+    try:
+        start_day = datetime.strptime((args.get("date_from") or "").strip(), "%Y-%m-%d").date()
+        end_day = datetime.strptime(
+            (args.get("date_to") or args.get("date_from") or "").strip(), "%Y-%m-%d"
+        ).date()
+    except ValueError:
+        return _tool_result("error", message="I did not catch those dates correctly.")
+
+    customer = await appointment_service.get_or_create_customer(
+        db,
+        business_id=business.id,
+        phone=phone,
+        name=(args.get("customer_name") or "").strip(),
+        language=Language.MIXED,
+    )
+
+    db.add(
+        WaitlistEntry(
+            business_id=business.id,
+            customer_id=customer.id,
+            preferred_from=datetime.combine(start_day, business.opens_at, tzinfo=zone).astimezone(
+                timezone.utc
+            ),
+            preferred_to=datetime.combine(end_day, business.closes_at, tzinfo=zone).astimezone(
+                timezone.utc
+            ),
+            reason=(args.get("reason") or "").strip(),
+        )
+    )
+    await db.flush()
+
+    return _tool_result(
+        "success",
+        message=(
+            "Added to the waiting list. They will get a WhatsApp message if a slot "
+            "opens in that period."
+        ),
+    )
+
+
 TOOL_HANDLERS = {
+    "lookup_caller": _handle_lookup_caller,
     "check_availability": _handle_check_availability,
     "book_appointment": _handle_book_appointment,
     "find_appointment": _handle_find_appointment,
     "reschedule_appointment": _handle_reschedule,
     "cancel_appointment": _handle_cancel,
+    "join_waitlist": _handle_join_waitlist,
 }
 
 

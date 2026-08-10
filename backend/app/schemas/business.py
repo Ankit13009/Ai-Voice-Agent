@@ -153,6 +153,13 @@ class BusinessOut(BaseModel):
     working_days: list[int]
     slot_duration_minutes: int
 
+    handoff_enabled: bool
+    handoff_phone: str
+    owner_notify_phone: str
+    notify_on_booking: bool
+    daily_summary_enabled: bool
+    daily_summary_hour: int
+
     # 0 means keep indefinitely, which must be chosen rather than fallen into.
     transcript_retention_days: int
     recording_retention_days: int
@@ -202,6 +209,13 @@ class BusinessUpdate(BaseModel):
     closes_at: time | None = None
     working_days: list[int] | None = None
     slot_duration_minutes: int | None = Field(default=None, ge=5, le=240)
+
+    handoff_enabled: bool | None = None
+    handoff_phone: str | None = Field(default=None, pattern=PHONE_PATTERN)
+    owner_notify_phone: str | None = Field(default=None, pattern=PHONE_PATTERN)
+    notify_on_booking: bool | None = None
+    daily_summary_enabled: bool | None = None
+    daily_summary_hour: int | None = Field(default=None, ge=0, le=23)
 
     transcript_retention_days: int | None = Field(default=None, ge=0, le=3650)
     recording_retention_days: int | None = Field(default=None, ge=0, le=3650)

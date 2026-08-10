@@ -142,6 +142,45 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
         body="Hello {{1}}, your appointment at {{2}} has been moved to {{3}}. Reply CANCEL if this does not work.",
         variable_order=("customer_name", "business_name", "appointment_time"),
     ),
+    # --- To the business owner, not the customer ---
+    # English only: the owner reads the dashboard in English and these are
+    # operational notices, not customer-facing messages.
+    (MessageKind.OWNER_BOOKING_ALERT, "en"): TemplateSpec(
+        name="owner_booking_alert_en",
+        language_code="en",
+        body="New booking at {{1}}: {{2}} on {{3}}. Reason: {{4}}.",
+        variable_order=("business_name", "customer_name", "appointment_time", "service_reason"),
+    ),
+    (MessageKind.OWNER_DAILY_SUMMARY, "en"): TemplateSpec(
+        name="owner_daily_summary_en",
+        language_code="en",
+        body=(
+            "{{1}} yesterday: {{2}} calls answered, {{3}} appointments booked, "
+            "{{4}} cancelled. You have {{5}} appointments today."
+        ),
+        variable_order=(
+            "business_name", "calls_total", "booked", "cancelled", "today_count",
+        ),
+    ),
+    # --- To a customer whose waitlisted window opened up ---
+    (MessageKind.WAITLIST_SLOT_OPEN, "en"): TemplateSpec(
+        name="waitlist_slot_open_en",
+        language_code="en",
+        body=(
+            "Hello {{1}}, a slot has opened at {{2}} on {{3}}. "
+            "Call {{4}} to take it before someone else does."
+        ),
+        variable_order=("customer_name", "business_name", "appointment_time", "business_phone"),
+    ),
+    (MessageKind.WAITLIST_SLOT_OPEN, "hi"): TemplateSpec(
+        name="waitlist_slot_open_hi",
+        language_code="hi",
+        body=(
+            "नमस्ते {{1}}, {{2}} में {{3}} का slot खाली हो गया है। "
+            "इसे लेने के लिए {{4}} पर कॉल करें।"
+        ),
+        variable_order=("customer_name", "business_name", "appointment_time", "business_phone"),
+    ),
     (MessageKind.RESCHEDULE, "hi"): TemplateSpec(
         name="appointment_rescheduled_hi",
         language_code="hi",
@@ -151,12 +190,20 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
 }
 
 
+# Messages addressed to the business owner rather than the customer. Their
+# language must not follow the customer's preference: the owner's language has
+# nothing to do with who happened to call.
+OWNER_KINDS = {MessageKind.OWNER_BOOKING_ALERT, MessageKind.OWNER_DAILY_SUMMARY}
+
+
 def resolve_template(kind: MessageKind, language: Language) -> TemplateSpec:
     """Pick the template for this message kind and language.
 
     Hindi and mixed-language customers both get the Hindi template: someone who
     conducted the call in Hindi should not receive an English-only reminder.
     """
+    if kind in OWNER_KINDS:
+        return TEMPLATES[(kind, "en")]
     code = "hi" if language in (Language.HINDI, Language.MIXED) else "en"
     spec = TEMPLATES.get((kind, code))
     if spec is None:  # pragma: no cover - every kind has both languages

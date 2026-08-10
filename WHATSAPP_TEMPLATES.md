@@ -1,20 +1,19 @@
 # WhatsApp templates to submit to Meta
 
-Submit each of these in **WhatsApp Manager -> Templates -> Create template**.
+Submit each in **WhatsApp Manager -> Templates -> Create template**.
 
-For every one: Category = **Utility** (not Marketing - utility is far cheaper and
-is the correct classification for appointment confirmations and reminders).
+Category **Utility** for all of them: it is the correct classification for
+appointment and operational messages, and costs a fraction of Marketing.
 
-Meta requires a sample value for each {{n}} placeholder or it rejects the
-submission. The samples are given below each template.
+Meta rejects a submission without a sample for each {{n}} placeholder.
 
 ---
 
 ## appointment_confirmation_en
 
-- **Name:** `appointment_confirmation_en`
 - **Category:** Utility
 - **Language:** English (`en`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -37,9 +36,9 @@ Hello {{1}}, your appointment at {{2}} is confirmed for {{3}}. Reply CANCEL to c
 
 ## appointment_confirmation_hi
 
-- **Name:** `appointment_confirmation_hi`
 - **Category:** Utility
 - **Language:** Hindi (`hi`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -62,9 +61,9 @@ Hello {{1}}, your appointment at {{2}} is confirmed for {{3}}. Reply CANCEL to c
 
 ## appointment_reminder_24h_en
 
-- **Name:** `appointment_reminder_24h_en`
 - **Category:** Utility
 - **Language:** English (`en`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -86,9 +85,9 @@ Reminder: {{1}}, you have an appointment at {{2}} tomorrow at {{3}}. Reply CANCE
 
 ## appointment_reminder_24h_hi
 
-- **Name:** `appointment_reminder_24h_hi`
 - **Category:** Utility
 - **Language:** Hindi (`hi`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -110,9 +109,9 @@ Reminder: {{1}}, you have an appointment at {{2}} tomorrow at {{3}}. Reply CANCE
 
 ## appointment_reminder_2h_en
 
-- **Name:** `appointment_reminder_2h_en`
 - **Category:** Utility
 - **Language:** English (`en`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -134,9 +133,9 @@ Reminder: {{1}}, you have an appointment at {{2}} tomorrow at {{3}}. Reply CANCE
 
 ## appointment_reminder_2h_hi
 
-- **Name:** `appointment_reminder_2h_hi`
 - **Category:** Utility
 - **Language:** Hindi (`hi`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -158,9 +157,9 @@ Reminder: {{1}}, you have an appointment at {{2}} tomorrow at {{3}}. Reply CANCE
 
 ## appointment_cancelled_en
 
-- **Name:** `appointment_cancelled_en`
 - **Category:** Utility
 - **Language:** English (`en`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -183,9 +182,9 @@ Hello {{1}}, your appointment at {{2}} on {{3}} has been cancelled. Call {{4}} t
 
 ## appointment_cancelled_hi
 
-- **Name:** `appointment_cancelled_hi`
 - **Category:** Utility
 - **Language:** Hindi (`hi`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -208,9 +207,9 @@ Hello {{1}}, your appointment at {{2}} on {{3}} has been cancelled. Call {{4}} t
 
 ## appointment_rescheduled_en
 
-- **Name:** `appointment_rescheduled_en`
 - **Category:** Utility
 - **Language:** English (`en`)
+- **Sent to:** the customer
 
 **Body:**
 
@@ -230,11 +229,112 @@ Hello {{1}}, your appointment at {{2}} has been moved to {{3}}. Reply CANCEL if 
 
 ---
 
-## appointment_rescheduled_hi
+## owner_booking_alert_en
 
-- **Name:** `appointment_rescheduled_hi`
+- **Category:** Utility
+- **Language:** English (`en`)
+- **Sent to:** the business owner
+
+**Body:**
+
+```
+New booking at {{1}}: {{2}} on {{3}}. Reason: {{4}}.
+```
+
+**Sample values:**
+
+- `{{1}}` = Sunrise Clinic   (business_name)
+- `{{2}}` = Anjali   (customer_name)
+- `{{3}}` = 12 Aug 2026, 4:30 PM   (appointment_time)
+- `{{4}}` = fever and cough   (service_reason)
+
+**Preview:**
+
+> New booking at Sunrise Clinic: Anjali on 12 Aug 2026, 4:30 PM. Reason: fever and cough.
+
+---
+
+## owner_daily_summary_en
+
+- **Category:** Utility
+- **Language:** English (`en`)
+- **Sent to:** the business owner
+
+**Body:**
+
+```
+{{1}} yesterday: {{2}} calls answered, {{3}} appointments booked, {{4}} cancelled. You have {{5}} appointments today.
+```
+
+**Sample values:**
+
+- `{{1}}` = Sunrise Clinic   (business_name)
+- `{{2}}` = 12   (calls_total)
+- `{{3}}` = 8   (booked)
+- `{{4}}` = 2   (cancelled)
+- `{{5}}` = 5   (today_count)
+
+**Preview:**
+
+> Sunrise Clinic yesterday: 12 calls answered, 8 appointments booked, 2 cancelled. You have 5 appointments today.
+
+---
+
+## waitlist_slot_open_en
+
+- **Category:** Utility
+- **Language:** English (`en`)
+- **Sent to:** the customer
+
+**Body:**
+
+```
+Hello {{1}}, a slot has opened at {{2}} on {{3}}. Call {{4}} to take it before someone else does.
+```
+
+**Sample values:**
+
+- `{{1}}` = Anjali   (customer_name)
+- `{{2}}` = Sunrise Clinic   (business_name)
+- `{{3}}` = 12 Aug 2026, 4:30 PM   (appointment_time)
+- `{{4}}` = +919810012345   (business_phone)
+
+**Preview:**
+
+> Hello Anjali, a slot has opened at Sunrise Clinic on 12 Aug 2026, 4:30 PM. Call +919810012345 to take it before someone else does.
+
+---
+
+## waitlist_slot_open_hi
+
 - **Category:** Utility
 - **Language:** Hindi (`hi`)
+- **Sent to:** the customer
+
+**Body:**
+
+```
+नमस्ते {{1}}, {{2}} में {{3}} का slot खाली हो गया है। इसे लेने के लिए {{4}} पर कॉल करें।
+```
+
+**Sample values:**
+
+- `{{1}}` = Anjali   (customer_name)
+- `{{2}}` = Sunrise Clinic   (business_name)
+- `{{3}}` = 12 Aug 2026, 4:30 PM   (appointment_time)
+- `{{4}}` = +919810012345   (business_phone)
+
+**Preview:**
+
+> नमस्ते Anjali, Sunrise Clinic में 12 Aug 2026, 4:30 PM का slot खाली हो गया है। इसे लेने के लिए +919810012345 पर कॉल करें।
+
+---
+
+## appointment_rescheduled_hi
+
+- **Category:** Utility
+- **Language:** Hindi (`hi`)
+- **Sent to:** the customer
 
 **Body:**
 
