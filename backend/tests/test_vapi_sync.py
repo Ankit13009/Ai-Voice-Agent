@@ -13,6 +13,21 @@ import pytest
 from app.services import vapi
 
 
+@pytest.fixture(autouse=True)
+def _vapi_key(monkeypatch):
+    """Supply a fake API key so these tests never depend on a real .env.
+
+    Without this they pass when run from the backend directory, where a
+    developer's .env happens to be loaded, and fail anywhere else including CI.
+    """
+    from app.config import get_settings
+
+    monkeypatch.setenv("VAPI_API_KEY", "test-key")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 class _Response:
     def __init__(self, status_code: int, payload: dict | None = None):
         self.status_code = status_code
