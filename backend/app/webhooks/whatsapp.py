@@ -20,6 +20,7 @@ from app.config import get_settings
 from app.core.deps import DbSession
 from app.core.errors import WebhookSignatureError
 from app.core.security import verify_meta_signature
+from app.services import platform_config
 from app.db.models import (
     Appointment,
     Business,
@@ -56,7 +57,8 @@ async def verify_webhook(
     the challenge unconditionally would let anyone bind their app to this URL.
     """
     settings = get_settings()
-    if hub_mode == "subscribe" and hub_verify_token and hub_verify_token == settings.whatsapp_verify_token:
+    expected_verify = await platform_config.get_value("whatsapp_verify_token")
+    if hub_mode == "subscribe" and hub_verify_token and hub_verify_token == expected_verify:
         logger.info("WhatsApp webhook verified.")
         return Response(content=hub_challenge, media_type="text/plain")
     logger.warning("Rejected WhatsApp webhook verification (bad token).")
@@ -78,7 +80,8 @@ async def handle_webhook(
     settings = get_settings()
     raw_body = await request.body()
 
-    if not verify_meta_signature(raw_body, x_hub_signature_256 or "", settings.whatsapp_app_secret):
+    app_secret = await platform_config.get_value("whatsapp_app_secret")
+    if not verify_meta_signature(raw_body, x_hub_signature_256 or "", app_secret):
         logger.warning("Rejected WhatsApp webhook with an invalid signature.")
         raise WebhookSignatureError()
 

@@ -624,3 +624,27 @@ class AuditLog(Base):
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     request_id: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=_now, index=True)
+
+
+class PlatformSetting(Base, TimestampMixin):
+    """Platform-wide configuration that an operator can change without a deploy.
+
+    Credentials started life as environment variables, which meant only whoever
+    holds the hosting login could set them up. That put a developer in the
+    middle of every client onboarding, so these live here instead and the
+    dashboard can write them.
+
+    Values are Fernet-encrypted at rest for the same reason OAuth tokens are: a
+    database dump, a backup file or a support query should not hand someone a
+    live WhatsApp token. They are never returned by any endpoint; the API
+    exposes only whether a value is set and its last four characters.
+
+    Deliberately key/value rather than a column per credential: adding a
+    provider should not require a migration during an onboarding call.
+    """
+
+    __tablename__ = "platform_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    encrypted_value: Mapped[str] = mapped_column(Text, default="")
+    updated_by: Mapped[str] = mapped_column(String(255), default="")

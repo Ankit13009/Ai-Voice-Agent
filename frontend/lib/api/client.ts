@@ -172,7 +172,7 @@ function buildUrl(path: string, params?: QueryParams): string {
 }
 
 interface RequestOptions {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   params?: QueryParams;
   /** Set for login/refresh, which must not attempt a token refresh on 401. */
@@ -306,6 +306,8 @@ export const api = {
     requestWithMessage<T>(path, { method: "POST", body, params }),
   patch: <T>(path: string, body?: unknown, params?: QueryParams) =>
     requestWithMessage<T>(path, { method: "PATCH", body, params }),
+  put: <T>(path: string, body?: unknown, params?: QueryParams) =>
+    requestWithMessage<T>(path, { method: "PUT", body, params }),
   delete: <T>(path: string, params?: QueryParams) =>
     requestWithMessage<T>(path, { method: "DELETE", params }),
 };

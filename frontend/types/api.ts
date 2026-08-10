@@ -484,6 +484,26 @@ export interface OutboundTestCallResult {
   status: string;
 }
 
+export interface PlatformSettingStatus {
+  set: boolean;
+  source: "dashboard" | "environment" | "none";
+  /** Last four characters for secrets; the full value for non-secret ids. */
+  preview: string;
+}
+
+export interface WhatsAppConfigStatus {
+  settings: Record<string, PlatformSettingStatus>;
+}
+
+export interface WhatsAppTestResult {
+  ok: boolean;
+  detail: string;
+  phone_number?: string;
+  verified_name?: string;
+  quality_rating?: string;
+  templates_approved?: number;
+}
+
 export interface AdminTenantUser {
   id: string;
   email: string;

@@ -293,10 +293,19 @@ async def _post_template(
     return False, "", reason
 
 
-def _credentials_for(business: Business) -> tuple[str, str]:
-    settings = get_settings()
-    phone_number_id = business.whatsapp_phone_number_id or settings.whatsapp_phone_number_id
-    access_token = settings.whatsapp_access_token
+async def _credentials_for(business: Business) -> tuple[str, str]:
+    """Credentials for this business, dashboard-managed first.
+
+    A business may have its own number so messages arrive from the clinic
+    rather than from the platform; otherwise the shared platform number is
+    used. The token is always platform-level: one Meta app owns every number.
+    """
+    from app.services import platform_config
+
+    phone_number_id = business.whatsapp_phone_number_id or await platform_config.get_value(
+        "whatsapp_phone_number_id"
+    )
+    access_token = await platform_config.get_value("whatsapp_access_token")
     if not (phone_number_id and access_token):
         raise IntegrationNotConfiguredError(
             "WhatsApp is not configured for this business.",
@@ -361,7 +370,7 @@ async def send_message(db: AsyncSession, message: WhatsAppMessage, business: Bus
 
     message.attempt_count += 1
     try:
-        phone_number_id, access_token = _credentials_for(business)
+        phone_number_id, access_token = await _credentials_for(business)
     except IntegrationNotConfiguredError as exc:
         message.status = MessageStatus.FAILED
         message.last_error = exc.message

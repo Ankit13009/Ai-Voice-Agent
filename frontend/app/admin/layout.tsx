@@ -68,6 +68,14 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
               >
                 Add client
               </Link>
+              {/* Platform-wide, not per-client: one Meta account sends for every
+                  business, so this belongs here rather than in a tenant's settings. */}
+              <Link
+                href="/admin/whatsapp"
+                className="rounded px-3 py-1.5 text-sm text-ink-muted hover:bg-surface-sunken hover:text-ink transition-colors"
+              >
+                WhatsApp
+              </Link>
             </nav>
           </div>
           <div className="flex items-center gap-3 min-w-0">

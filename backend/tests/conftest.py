@@ -119,6 +119,10 @@ async def client(session_factory, tenants, monkeypatch) -> AsyncIterator[AsyncCl
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
+    # Services that open their own session (platform config, notifications,
+    # the reminder loop) do not go through get_db, so without this they read
+    # the developer's real database while the test asserts against another.
+    monkeypatch.setattr("app.db.session.SessionLocal", session_factory)
 
     # No test should ever reach a third party.
     async def _no_vapi(*args, **kwargs):

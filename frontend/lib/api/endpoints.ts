@@ -11,6 +11,8 @@ import type {
   AdminBusinessRow,
   AdminTenantUsers,
   IssuedPassword,
+  WhatsAppConfigStatus,
+  WhatsAppTestResult,
   Appointment,
   AppointmentCancelRequest,
   AppointmentCreateRequest,
@@ -184,6 +186,12 @@ export const adminApi = {
     ),
   resetUserPassword: (userId: string) =>
     api.post<IssuedPassword>(`${V1}/admin/users/${userId}/reset-password`),
+
+  whatsappStatus: (signal?: AbortSignal) =>
+    api.get<WhatsAppConfigStatus>(`${V1}/admin/whatsapp`, undefined, signal),
+  saveWhatsapp: (payload: Record<string, string>) =>
+    api.put<WhatsAppConfigStatus>(`${V1}/admin/whatsapp`, payload),
+  testWhatsapp: () => api.post<WhatsAppTestResult>(`${V1}/admin/whatsapp/test`),
 };
 
 export const onboardingApi = {

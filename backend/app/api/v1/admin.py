@@ -10,11 +10,12 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select, update
 
 from app.config import get_settings
 from app.core.deps import DbSession, RequireSuperadmin, write_audit_log
-from app.core.errors import NotFoundError
+from app.core.errors import BadRequestError, NotFoundError
 from app.core.response import ok
 from app.core.security import generate_temporary_password, hash_password
 from app.db.models import (
@@ -248,4 +249,143 @@ async def admin_reset_password(
     return ok(
         {"id": user.id, "email": user.email, "temporary_password": temporary},
         message="Password reset. Give them this password; it cannot be shown again.",
+    )
+
+
+class WhatsAppConfigRequest(BaseModel):
+    """All optional: an operator usually fixes one field, not all five.
+
+    An empty string clears the stored value and lets the environment variable
+    take over again, which is the only way out of a bad paste without a deploy.
+    """
+
+    whatsapp_access_token: str | None = Field(default=None, max_length=1000)
+    whatsapp_phone_number_id: str | None = Field(default=None, max_length=64)
+    whatsapp_business_account_id: str | None = Field(default=None, max_length=64)
+    whatsapp_app_secret: str | None = Field(default=None, max_length=200)
+    whatsapp_verify_token: str | None = Field(default=None, max_length=200)
+
+
+@router.get("/whatsapp", summary="WhatsApp connection status")
+async def whatsapp_status(_admin: RequireSuperadmin) -> dict:
+    """Whether each credential is set, and where it came from.
+
+    Never returns a token. Setting one up involves pasting five values from
+    three different Meta screens, so the useful thing is knowing which are
+    present and which of two tokens is in use, not the values themselves.
+    """
+    from app.services import platform_config
+
+    return ok({"settings": await platform_config.describe()})
+
+
+@router.put("/whatsapp", summary="Save WhatsApp credentials")
+async def save_whatsapp_config(
+    payload: WhatsAppConfigRequest,
+    db: DbSession,
+    request: Request,
+    admin: RequireSuperadmin,
+) -> dict:
+    from app.services import platform_config
+
+    updates = {k: v for k, v in payload.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        raise BadRequestError("Nothing to save.")
+
+    changed = await platform_config.set_values(db, updates, updated_by=admin.email)
+
+    await write_audit_log(
+        db,
+        request,
+        action="platform.whatsapp_configured",
+        business_id=None,
+        resource_type="platform_setting",
+        resource_id="whatsapp",
+        # Names only. The values are credentials and an audit log is read by
+        # more people than a credential store should be.
+        metadata={"fields": sorted(changed), "by": admin.email},
+    )
+    await db.commit()
+
+    return ok(
+        {"settings": await platform_config.describe()},
+        message="Saved. Use Test connection to check it works.",
+    )
+
+
+@router.post("/whatsapp/test", summary="Check the WhatsApp credentials actually work")
+async def test_whatsapp_config(_admin: RequireSuperadmin) -> dict:
+    """Ask Meta whether these credentials can see the account.
+
+    Saved credentials that have never been used are a guess: a token pasted
+    with a trailing space, or one scoped to the wrong account, looks identical
+    in the form and fails on the first real appointment. Checking here means
+    that is found during setup instead of by a customer who never got their
+    reminder.
+    """
+    import httpx
+
+    from app.services import platform_config
+
+    token = await platform_config.get_value("whatsapp_access_token")
+    waba_id = await platform_config.get_value("whatsapp_business_account_id")
+    phone_id = await platform_config.get_value("whatsapp_phone_number_id")
+
+    missing = [
+        name
+        for name, value in (
+            ("access token", token),
+            ("business account id", waba_id),
+            ("phone number id", phone_id),
+        )
+        if not value
+    ]
+    if missing:
+        return ok(
+            {"ok": False, "detail": f"Still missing: {', '.join(missing)}."},
+            message="Not configured yet.",
+        )
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
+            number = await client.get(
+                f"https://graph.facebook.com/v21.0/{phone_id}",
+                params={"fields": "display_phone_number,verified_name,quality_rating"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            templates = await client.get(
+                f"https://graph.facebook.com/v21.0/{waba_id}/message_templates",
+                params={"limit": 200},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("WhatsApp test call failed: %s", exc)
+            return ok({"ok": False, "detail": "Could not reach Meta. Try again."})
+
+    if number.status_code != 200:
+        detail = (number.json().get("error", {}) or {}).get("message", number.text[:160])
+        return ok({"ok": False, "detail": detail}, message="Meta rejected these credentials.")
+
+    info = number.json()
+    approved = 0
+    if templates.status_code == 200:
+        approved = sum(
+            1 for t in templates.json().get("data", []) if t.get("status") == "APPROVED"
+        )
+
+    return ok(
+        {
+            "ok": True,
+            "phone_number": info.get("display_phone_number", ""),
+            "verified_name": info.get("verified_name", ""),
+            "quality_rating": info.get("quality_rating", ""),
+            "templates_approved": approved,
+            # Nothing sends until templates are approved, so a working token
+            # with zero approved templates is still a non-working WhatsApp.
+            "detail": (
+                f"Connected as {info.get('verified_name', 'this account')}. "
+                f"{approved} template(s) approved."
+            ),
+        },
+        message="WhatsApp is connected.",
     )
