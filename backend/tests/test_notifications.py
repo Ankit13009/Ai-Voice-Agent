@@ -178,3 +178,69 @@ async def test_silent_day_produces_no_summary(session_factory, tenants, monkeypa
         await db.commit()
 
     assert await send_due_daily_summaries() == 0
+
+
+async def test_owner_is_alerted_when_the_calendar_disconnects(session_factory, tenants):
+    """A revoked calendar must reach the owner, not just the logs.
+
+    With no calendar the agent refuses every booking, so the outage is silent
+    from the owner's side until a caller complains.
+    """
+    from app.services.notifications import notify_owner_calendar_disconnected
+
+    async with session_factory() as db:
+        business = (
+            await db.execute(select(Business).where(Business.id == tenants["alpha_id"]))
+        ).scalar_one()
+        business.owner_notify_phone = "+919000000099"
+        await db.flush()
+
+        assert await notify_owner_calendar_disconnected(db, business) is True
+        await db.commit()
+
+    async with session_factory() as db:
+        message = (
+            await db.execute(
+                select(WhatsAppMessage).where(
+                    WhatsAppMessage.kind == MessageKind.OWNER_CALENDAR_DISCONNECTED
+                )
+            )
+        ).scalar_one()
+        assert message.to_phone == "+919000000099"
+        assert message.business_id == tenants["alpha_id"]
+        # The owner must be told which business, since one owner may run several.
+        assert "disconnected" in message.rendered_preview.lower()
+
+
+async def test_calendar_alert_is_not_silenced_by_muting_booking_alerts(
+    session_factory, tenants
+):
+    """Muting routine per-booking pings must not also mute an outage."""
+    from app.services.notifications import notify_owner_calendar_disconnected
+
+    async with session_factory() as db:
+        business = (
+            await db.execute(select(Business).where(Business.id == tenants["alpha_id"]))
+        ).scalar_one()
+        business.owner_notify_phone = "+919000000099"
+        business.notify_on_booking = False
+        await db.flush()
+
+        assert await notify_owner_calendar_disconnected(db, business) is True
+
+
+async def test_calendar_alert_is_skipped_when_no_owner_number_exists(
+    session_factory, tenants
+):
+    """No number is a logged warning, not a crash inside the failure path."""
+    from app.services.notifications import notify_owner_calendar_disconnected
+
+    async with session_factory() as db:
+        business = (
+            await db.execute(select(Business).where(Business.id == tenants["alpha_id"]))
+        ).scalar_one()
+        business.owner_notify_phone = ""
+        business.contact_phone = ""
+        await db.flush()
+
+        assert await notify_owner_calendar_disconnected(db, business) is False

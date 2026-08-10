@@ -162,6 +162,15 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
             "business_name", "calls_total", "booked", "cancelled", "today_count",
         ),
     ),
+    (MessageKind.OWNER_CALENDAR_DISCONNECTED, "en"): TemplateSpec(
+        name="owner_calendar_disconnected_en",
+        language_code="en",
+        body=(
+            "Action needed: {{1}}'s Google Calendar is disconnected, so the phone "
+            "assistant cannot check or book appointments. Reconnect it here: {{2}}"
+        ),
+        variable_order=("business_name", "dashboard_url"),
+    ),
     # --- To a customer whose waitlisted window opened up ---
     (MessageKind.WAITLIST_SLOT_OPEN, "en"): TemplateSpec(
         name="waitlist_slot_open_en",
@@ -193,7 +202,11 @@ TEMPLATES: dict[tuple[MessageKind, str], TemplateSpec] = {
 # Messages addressed to the business owner rather than the customer. Their
 # language must not follow the customer's preference: the owner's language has
 # nothing to do with who happened to call.
-OWNER_KINDS = {MessageKind.OWNER_BOOKING_ALERT, MessageKind.OWNER_DAILY_SUMMARY}
+OWNER_KINDS = {
+    MessageKind.OWNER_BOOKING_ALERT,
+    MessageKind.OWNER_DAILY_SUMMARY,
+    MessageKind.OWNER_CALENDAR_DISCONNECTED,
+}
 
 
 def resolve_template(kind: MessageKind, language: Language) -> TemplateSpec:

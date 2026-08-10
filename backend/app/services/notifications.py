@@ -29,6 +29,7 @@ from app.db.models import (
     WaitlistEntry,
     WhatsAppMessage,
 )
+from app.config import get_settings
 from app.db.session import SessionLocal
 from app.services import whatsapp
 
@@ -80,6 +81,63 @@ async def notify_owner_of_booking(
         await db.flush()
     except Exception:  # noqa: BLE001
         logger.exception("Could not queue owner booking alert for %s", business.slug)
+
+
+async def notify_owner_calendar_disconnected(db: AsyncSession, business: Business) -> bool:
+    """Tell the owner their calendar connection died.
+
+    This is the one owner message that is urgent rather than informational: with
+    no calendar the agent cannot read availability, so it refuses every booking
+    request. Without this the first sign of trouble is a caller being turned
+    away, which the owner only learns about if that caller complains.
+
+    Deliberately not gated on `notify_on_booking`: that switch is for the
+    routine per-booking alerts an owner may reasonably mute, and muting them
+    should not also silence an outage. Never raises, because it runs inside the
+    token-refresh failure path and must not mask the original error.
+    """
+    if not business.whatsapp_enabled:
+        logger.warning(
+            "Calendar disconnected for %s but WhatsApp is off; owner not alerted.",
+            business.slug,
+        )
+        return False
+
+    number = _owner_number(business)
+    if not number:
+        logger.warning(
+            "Calendar disconnected for %s but no owner number is set.", business.slug
+        )
+        return False
+
+    spec = whatsapp.resolve_template(
+        MessageKind.OWNER_CALENDAR_DISCONNECTED, business.primary_language
+    )
+    variables = {
+        "business_name": business.name,
+        "dashboard_url": get_settings().dashboard_url or "your dashboard",
+    }
+
+    try:
+        db.add(
+            WhatsAppMessage(
+                business_id=business.id,
+                to_phone=number,
+                kind=MessageKind.OWNER_CALENDAR_DISCONNECTED,
+                status=MessageStatus.PENDING,
+                template_name=spec.name,
+                language_code=spec.language_code,
+                payload=variables,
+                rendered_preview=spec.render(variables),
+                scheduled_for=datetime.now(timezone.utc),
+            )
+        )
+        await db.flush()
+        logger.info("Queued calendar-disconnected alert for %s", business.slug)
+        return True
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not queue calendar-disconnected alert for %s", business.slug)
+        return False
 
 
 # --------------------------------------------------------------------------- #

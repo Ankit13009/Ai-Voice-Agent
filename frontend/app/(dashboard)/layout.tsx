@@ -5,6 +5,7 @@ import { useEffect } from "react";
 import type { ReactNode } from "react";
 
 import { Shell } from "@/components/layout/Shell";
+import { CalendarStatusBanner } from "@/components/integrations/CalendarStatusBanner";
 import { useAuth } from "@/lib/auth";
 import { tokenStore } from "@/lib/api/client";
 import { LabelProvider } from "@/lib/labels";
@@ -48,7 +49,15 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   return (
     <LabelProvider>
-      <Shell>{children}</Shell>
+      <Shell>
+        {/* Above the page content on every route: a disconnected calendar stops
+            the agent booking anything, and the owner has no reason to open
+            settings on a day when nothing else looks wrong. */}
+        <div className="mb-4 empty:mb-0">
+          <CalendarStatusBanner />
+        </div>
+        {children}
+      </Shell>
     </LabelProvider>
   );
 }

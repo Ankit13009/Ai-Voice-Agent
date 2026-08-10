@@ -111,6 +111,18 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
     @property
+    def dashboard_url(self) -> str:
+        """Where to send an owner who needs to fix something.
+
+        Derived from the first allowed CORS origin rather than configured
+        separately: that value is already the deployed dashboard, and a second
+        setting would only create a way for the two to disagree and for links
+        in messages to point somewhere dead.
+        """
+        origins = self.cors_origin_list
+        return origins[0] if origins else ""
+
+    @property
     def sqlalchemy_url(self) -> str:
         """Normalize the DSN to an async driver.
 

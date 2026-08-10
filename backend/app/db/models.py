@@ -121,6 +121,10 @@ class MessageKind(StrEnum):
     # To the business owner, not the customer.
     OWNER_BOOKING_ALERT = "owner_booking_alert"
     OWNER_DAILY_SUMMARY = "owner_daily_summary"
+    # Sent the moment Google revokes the calendar connection. Until it is
+    # reconnected the agent can no longer read availability, so this is the one
+    # owner message that is genuinely urgent.
+    OWNER_CALENDAR_DISCONNECTED = "owner_calendar_disconnected"
     # To a customer whose waitlisted window has opened up.
     WAITLIST_SLOT_OPEN = "waitlist_slot_open"
 

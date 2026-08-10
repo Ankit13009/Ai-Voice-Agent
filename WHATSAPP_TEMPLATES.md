@@ -280,6 +280,33 @@ New booking at {{1}}: {{2}} on {{3}}. Reason: {{4}}.
 
 ---
 
+## owner_calendar_disconnected_en
+
+- **Category:** Utility
+- **Language:** English (`en`)
+- **Sent to:** the business owner
+
+Sent once, at the moment Google revokes the calendar connection. Until it is
+reconnected the assistant cannot read availability and refuses every booking,
+so this is the only owner message that is an outage rather than an update.
+
+**Body:**
+
+```
+Action needed: {{1}}'s Google Calendar is disconnected, so the phone assistant cannot check or book appointments. Reconnect it here: {{2}}
+```
+
+**Sample values:**
+
+- `{{1}}` = Sunrise Clinic   (business_name)
+- `{{2}}` = https://app.example.com   (dashboard_url)
+
+**Preview:**
+
+> Action needed: Sunrise Clinic's Google Calendar is disconnected, so the phone assistant cannot check or book appointments. Reconnect it here: https://app.example.com
+
+---
+
 ## waitlist_slot_open_en
 
 - **Category:** Utility

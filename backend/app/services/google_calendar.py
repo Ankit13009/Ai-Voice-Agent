@@ -229,9 +229,25 @@ async def _get_access_token(db: AsyncSession, business_id: str) -> tuple[str, Ca
         body = response.text[:300]
         logger.error("Google token refresh failed %s: %s", response.status_code, body)
         if "invalid_grant" in body:
+            # Alert only on the transition. A disconnected calendar is hit again
+            # on every subsequent call, and re-alerting each time would bury the
+            # owner in identical messages for a single outage.
+            was_connected = cred.is_connected
             cred.is_connected = False
             cred.last_error = "Google access was revoked. Reconnect the calendar."
             await db.flush()
+
+            if was_connected:
+                business = await db.get(Business, business_id)
+                if business is not None:
+                    # Imported here: notifications imports this module for the
+                    # waitlist path, and a module-level import would be circular.
+                    from app.services.notifications import (
+                        notify_owner_calendar_disconnected,
+                    )
+
+                    await notify_owner_calendar_disconnected(db, business)
+
             raise IntegrationNotConfiguredError(
                 "The Google Calendar connection was revoked. Please reconnect it."
             )
