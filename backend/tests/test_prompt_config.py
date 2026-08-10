@@ -143,3 +143,46 @@ def test_business_vocabulary_replaces_clinic_wording():
     prompt = build_system_prompt(salon, [])
     assert "stylist" in prompt.lower()
     assert "patient" not in prompt.lower()
+
+
+def test_the_prompt_does_not_contradict_itself_about_combining_questions():
+    """The rewrite's reason for existing.
+
+    "Ask ONE thing at a time" sat in the speaking rules while the booking steps
+    said to combine questions. Given both, the agent asked name and reason
+    separately, which cost about ten seconds of every call and was billed on
+    every turn.
+    """
+    prompt = build_system_prompt(_business(), [])
+    assert "COMBINED INTO ONE" in prompt
+    assert "ONE thing at a time" not in prompt
+
+
+def test_the_prompt_stays_small_enough_to_be_cheap():
+    """Every token here is re-sent on every turn of every call.
+
+    A prompt that quietly grows is a bill that quietly grows, and slower first
+    words, since nothing can be said until all of it has been read.
+    """
+    prompt = build_system_prompt(_business(), [])
+    approx_tokens = len(prompt) // 4
+    assert approx_tokens < 1800, (
+        f"prompt is ~{approx_tokens} tokens. It is re-read on every turn, so "
+        "growth here costs money and latency on every call."
+    )
+
+
+@pytest.mark.parametrize(
+    "behaviour",
+    [
+        "lookup_caller",       # recognise a returning caller
+        "THREE times",         # offer three slots, not one
+        "join_waitlist",       # never end empty-handed
+        "returned success",    # never claim a booking before the tool confirms
+        "inventing information",  # never offer an unchecked time
+        "Never read its JSON",    # never speak raw tool output
+    ],
+)
+def test_rewriting_the_prompt_kept_each_behaviour(behaviour: str):
+    """Shortening must not quietly drop a rule that took a real call to learn."""
+    assert behaviour in build_system_prompt(_business(), [])
