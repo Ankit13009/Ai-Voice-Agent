@@ -153,6 +153,10 @@ class BusinessOut(BaseModel):
     working_days: list[int]
     slot_duration_minutes: int
 
+    # 0 means keep indefinitely, which must be chosen rather than fallen into.
+    transcript_retention_days: int
+    recording_retention_days: int
+
     whatsapp_enabled: bool
     reminder_24h_enabled: bool
     reminder_2h_enabled: bool
@@ -198,6 +202,9 @@ class BusinessUpdate(BaseModel):
     closes_at: time | None = None
     working_days: list[int] | None = None
     slot_duration_minutes: int | None = Field(default=None, ge=5, le=240)
+
+    transcript_retention_days: int | None = Field(default=None, ge=0, le=3650)
+    recording_retention_days: int | None = Field(default=None, ge=0, le=3650)
 
     whatsapp_enabled: bool | None = None
     reminder_24h_enabled: bool | None = None

@@ -7,8 +7,12 @@ call instead of leaving the agent quoting last week's timings.
 
 import logging
 
+from datetime import datetime, timezone
+from typing import Literal
+
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import update
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -20,9 +24,17 @@ from app.core.deps import (
     scoped_get,
     write_audit_log,
 )
-from app.core.errors import IntegrationNotConfiguredError, UpstreamError
+from app.core.errors import AlreadyExistsError, IntegrationNotConfiguredError, UpstreamError
 from app.core.response import ok
-from app.db.models import CalendarCredential, Business, StaffMember
+from app.core.security import generate_temporary_password, hash_password
+from app.db.models import (
+    Business,
+    CalendarCredential,
+    RefreshToken,
+    StaffMember,
+    User,
+    UserRole,
+)
 from app.schemas.business import BusinessUpdate, StaffMemberCreate, StaffMemberUpdate
 from app.services import vapi
 
@@ -120,6 +132,8 @@ async def _serialize_business(db, business: Business) -> dict:
         "closes_at": business.closes_at.strftime("%H:%M:%S"),
         "working_days": business.working_days,
         "slot_duration_minutes": business.slot_duration_minutes,
+        "transcript_retention_days": business.transcript_retention_days,
+        "recording_retention_days": business.recording_retention_days,
         "whatsapp_enabled": business.whatsapp_enabled,
         "reminder_24h_enabled": business.reminder_24h_enabled,
         "reminder_2h_enabled": business.reminder_2h_enabled,
@@ -296,6 +310,126 @@ async def outbound_test_call(
     return ok(
         {"call_id": call.get("id", ""), "status": call.get("status", "queued")},
         message=f"Calling {payload.phone_number} now. Answer to talk to {business.agent_name}.",
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Users of this business
+# --------------------------------------------------------------------------- #
+class UserCreateRequest(BaseModel):
+    email: EmailStr
+    full_name: str = Field(default="", max_length=255)
+    role: Literal["owner", "staff"] = "staff"
+
+
+@router.get("/me/users", summary="List users of this business")
+async def list_users(
+    business_id: ActiveBusiness, db: DbSession, _owner: RequireOwner
+) -> dict:
+    rows = (
+        await db.execute(
+            select(User).where(User.business_id == business_id).order_by(User.email)
+        )
+    ).scalars().all()
+    return ok(
+        [
+            {
+                "id": u.id,
+                "email": u.email,
+                "full_name": u.full_name,
+                "role": u.role.value,
+                "is_active": u.is_active,
+                "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+                "is_locked": bool(u.locked_until and u.locked_until > datetime.now(timezone.utc)),
+                "must_change_password": u.must_change_password,
+            }
+            for u in rows
+        ]
+    )
+
+
+@router.post("/me/users", status_code=201, summary="Add a user to this business")
+async def create_user(
+    payload: UserCreateRequest,
+    business_id: ActiveBusiness,
+    db: DbSession,
+    request: Request,
+    _owner: RequireOwner,
+) -> dict:
+    """Create a staff or owner account, returning a one-time password.
+
+    The password is generated rather than chosen by the creator, and shown once.
+    Letting one person set another's password means the creator knows it, which
+    quietly breaks the assumption that an account belongs to one human.
+    """
+    email = payload.email.lower()
+    if (await db.execute(select(User).where(User.email == email))).scalar_one_or_none():
+        raise AlreadyExistsError("A user with that email address already exists.")
+
+    temporary = generate_temporary_password()
+    user = User(
+        email=email,
+        password_hash=hash_password(temporary),
+        full_name=payload.full_name,
+        role=UserRole(payload.role),
+        business_id=business_id,
+        must_change_password=True,
+    )
+    db.add(user)
+
+    await write_audit_log(
+        db, request, action="user.created", business_id=business_id,
+        resource_type="user", resource_id=user.id, metadata={"role": payload.role},
+    )
+    await db.commit()
+
+    return ok(
+        {"id": user.id, "email": user.email, "temporary_password": temporary},
+        message="User created. Give them this password; it cannot be shown again.",
+    )
+
+
+@router.post("/me/users/{user_id}/reset-password", summary="Reset a user's password")
+async def reset_user_password(
+    user_id: str,
+    business_id: ActiveBusiness,
+    db: DbSession,
+    request: Request,
+    owner: RequireOwner,
+) -> dict:
+    """Issue a new one-time password for a user of this business.
+
+    There is no email service, and a self-serve "forgot password" link that
+    cannot be delivered is worse than none. This matches how the product is
+    actually operated: the owner phones you, or their staff phones them, and a
+    new password is read out. It is scoped to the caller's own business, resets
+    the lockout, forces a change at next login, and revokes every existing
+    session so a stolen one cannot outlive the reset.
+    """
+    user = await scoped_get(db, User, user_id, business_id, resource_name="User")
+
+    temporary = generate_temporary_password()
+    user.password_hash = hash_password(temporary)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.locked_until = None
+
+    revoked = await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+
+    await write_audit_log(
+        db, request, action="user.password_reset", business_id=business_id,
+        resource_type="user", resource_id=user.id,
+        metadata={"by": owner.email, "sessions_revoked": revoked.rowcount or 0},
+    )
+    await db.commit()
+
+    return ok(
+        {"id": user.id, "email": user.email, "temporary_password": temporary},
+        message="Password reset. Give them this password; it cannot be shown again.",
     )
 
 

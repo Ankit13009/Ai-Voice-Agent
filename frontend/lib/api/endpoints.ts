@@ -21,11 +21,13 @@ import type {
   ChangePasswordRequest,
   Business,
   BusinessTypePreset,
+  BusinessUser,
   BusinessUpdateRequest,
   DashboardStats,
   StaffMember,
   StaffMemberCreateRequest,
   StaffMemberUpdateRequest,
+  TemporaryPassword,
   TestCallConfig,
   GoogleAuthorizeResponse,
   GoogleCalendarStatus,
@@ -97,13 +99,21 @@ export const businessApi = {
   testCallConfig: (signal?: AbortSignal) =>
     api.get<TestCallConfig>(`${V1}/businesses/me/test-call`, undefined, signal),
 
-  listDoctors: (signal?: AbortSignal) =>
+  listUsers: (signal?: AbortSignal) =>
+    api.get<BusinessUser[]>(`${V1}/businesses/me/users`, undefined, signal),
+  createUser: (payload: { email: string; full_name?: string; role?: "owner" | "staff" }) =>
+    api.post<TemporaryPassword>(`${V1}/businesses/me/users`, payload),
+  /** Issues a one-time password and revokes the user's existing sessions. */
+  resetUserPassword: (userId: string) =>
+    api.post<TemporaryPassword>(`${V1}/businesses/me/users/${userId}/reset-password`),
+
+  listStaffMembers: (signal?: AbortSignal) =>
     api.get<StaffMember[]>(`${V1}/businesses/me/staff`, undefined, signal),
-  createDoctor: (payload: StaffMemberCreateRequest) =>
+  createStaffMember: (payload: StaffMemberCreateRequest) =>
     api.post<StaffMember>(`${V1}/businesses/me/staff`, payload),
-  updateDoctor: (id: string, payload: StaffMemberUpdateRequest) =>
+  updateStaffMember: (id: string, payload: StaffMemberUpdateRequest) =>
     api.patch<StaffMember>(`${V1}/businesses/me/staff/${id}`, payload),
-  deactivateDoctor: (id: string) => api.delete<null>(`${V1}/businesses/me/staff/${id}`),
+  deactivateStaffMember: (id: string) => api.delete<null>(`${V1}/businesses/me/staff/${id}`),
 };
 
 export const appointmentApi = {

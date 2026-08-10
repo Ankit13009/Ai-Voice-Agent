@@ -224,6 +224,14 @@ class Business(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
 
+    # --- Data retention ---
+    # Call transcripts and recordings of a clinic are health data. Keeping them
+    # forever because nobody chose a number is the default that causes trouble,
+    # so a default is chosen here and is editable per business. 0 means keep
+    # indefinitely, which a business must opt into rather than fall into.
+    transcript_retention_days: Mapped[int] = mapped_column(Integer, default=365)
+    recording_retention_days: Mapped[int] = mapped_column(Integer, default=90)
+
     users: Mapped[list["User"]] = relationship(back_populates="business")
     staff_members: Mapped[list["StaffMember"]] = relationship(back_populates="business")
 
@@ -263,6 +271,15 @@ class User(Base, TimestampMixin):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_login_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+    # --- Brute-force protection ---
+    # Rate limiting alone is per-process and keyed by IP, so it neither survives
+    # a restart nor stops an attacker rotating addresses. Locking the account
+    # itself is the control that actually binds to the thing being attacked.
+    failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    # Set when an owner resets this user's password; forces a change at next login.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
 
     business: Mapped["Business | None"] = relationship(back_populates="users")
 

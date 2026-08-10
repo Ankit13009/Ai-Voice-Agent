@@ -7,6 +7,7 @@ leaks its prefix through timing and is a real, exploited attack on webhooks.
 
 import base64
 import hashlib
+import secrets
 import hmac
 import logging
 from datetime import datetime, timedelta, timezone
@@ -50,6 +51,22 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+def generate_temporary_password() -> str:
+    """A password that is secure enough and can be read aloud over the phone.
+
+    Ambiguous characters (0/O, 1/l/I) are excluded because these get dictated
+    down a line, and a password that cannot be communicated reliably gets
+    written on a sticky note instead. ~46 bits of entropy, which is ample for a
+    credential that must be changed at first login and expires on use.
+    """
+    words = ("amber", "cedar", "coral", "delta", "ember", "flint", "lunar", "olive",
+             "quartz", "raven", "swift", "topaz")
+    alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+    word = secrets.choice(words)
+    tail = "".join(secrets.choice(alphabet) for _ in range(7))
+    return f"{word}-{tail}"
+
+
 def dummy_password_verify() -> None:
     """Burn a bcrypt round on a login for an email that doesn't exist.
 
@@ -91,6 +108,13 @@ def create_token(
         "business_id": business_id,
         "role": role,
         "type": token_type,
+        # A unique token id. Without it, two tokens minted for the same user
+        # within the same second are byte-identical, because every other claim
+        # matches and iat/exp only have second resolution. Refresh tokens are
+        # stored by hash under a unique constraint, so two logins a moment apart
+        # would collide and fail with a 500. `jti` is also what makes individual
+        # token revocation possible later.
+        "jti": secrets.token_urlsafe(16),
         "iat": int(now.timestamp()),
         "exp": int((now + ttl).timestamp()),
         "nbf": int(now.timestamp()),

@@ -29,6 +29,7 @@ import {
 } from "@/components/ui";
 import type { StaffMember } from "@/types/api";
 import { TestCall } from "@/components/TestCall";
+import { UsersCard } from "@/components/settings/UsersCard";
 
 const LANGUAGE_OPTIONS = [
   { value: "hi-en", label: "Hindi + English (recommended)" },
@@ -90,6 +91,8 @@ export default function SettingsPage() {
         <AgentCard business={business.data} onSaved={business.refetch} />
         <ScheduleCard business={business.data} onSaved={business.refetch} />
         <RemindersCard business={business.data} onSaved={business.refetch} />
+        <RetentionCard business={business.data} onSaved={business.refetch} />
+        <UsersCard />
         <DoctorsCard business={business.data} onChange={business.refetch} />
       </div>
     </>
@@ -489,6 +492,81 @@ function RemindersCard({ business, onSaved }: { business: Business; onSaved: () 
   );
 }
 
+function RetentionCard({ business, onSaved }: { business: Business; onSaved: () => void }) {
+  const toast = useToast();
+  const [transcriptDays, setTranscriptDays] = useState(String(business.transcript_retention_days));
+  const [recordingDays, setRecordingDays] = useState(String(business.recording_retention_days));
+
+  const save = useMutation(async () => {
+    try {
+      const { message } = await businessApi.update({
+        transcript_retention_days: Number(transcriptDays),
+        recording_retention_days: Number(recordingDays),
+      });
+      toast.showSuccess(message, "Retention updated.");
+      onSaved();
+    } catch (error) {
+      toast.showApiError(error);
+    }
+  });
+
+  return (
+    <Card>
+      <CardHeader
+        title="Data retention"
+        description="How long call transcripts and recordings are kept before being deleted automatically."
+      />
+      <CardBody className="flex flex-col gap-4">
+        <Alert tone="info">
+          Call recordings and transcripts of your conversations are personal data. Keeping
+          them only as long as you need them is both good practice and, for healthcare,
+          a legal expectation under India&rsquo;s DPDP Act. The call record itself is always
+          kept, so your reporting and history stay intact; only the content is removed.
+        </Alert>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field
+            label="Delete transcripts after"
+            hint="Days. Set to 0 to keep them indefinitely."
+          >
+            <Input
+              type="number"
+              min={0}
+              max={3650}
+              value={transcriptDays}
+              onChange={(e) => setTranscriptDays(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Delete recordings after"
+            hint="Days. Audio is the more sensitive record, so it usually goes sooner."
+          >
+            <Input
+              type="number"
+              min={0}
+              max={3650}
+              value={recordingDays}
+              onChange={(e) => setRecordingDays(e.target.value)}
+            />
+          </Field>
+        </div>
+
+        {(Number(transcriptDays) === 0 || Number(recordingDays) === 0) && (
+          <Alert tone="warning">
+            A value of 0 keeps that data forever. That is a deliberate choice, not a default,
+            and it should be one you can justify to a customer who asks.
+          </Alert>
+        )}
+      </CardBody>
+      <CardFooter>
+        <Button variant="primary" onClick={() => save.run()} loading={save.pending}>
+          Save
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
 function DoctorsCard({ business, onChange }: { business: Business; onChange: () => void }) {
   const toast = useToast();
   const [name, setName] = useState("");
@@ -498,7 +576,7 @@ function DoctorsCard({ business, onChange }: { business: Business; onChange: () 
 
   const add = useMutation(async () => {
     try {
-      const { message } = await businessApi.createDoctor({
+      const { message } = await businessApi.createStaffMember({
         name: name.trim(),
         specialization: specialization.trim(),
         google_calendar_id: calendarId.trim(),
@@ -516,7 +594,7 @@ function DoctorsCard({ business, onChange }: { business: Business; onChange: () 
 
   const deactivate = useMutation(async (staffMember: StaffMember) => {
     try {
-      const { message } = await businessApi.deactivateDoctor(staffMember.id);
+      const { message } = await businessApi.deactivateStaffMember(staffMember.id);
       toast.showSuccess(message, "StaffMember deactivated.");
       onChange();
     } catch (error) {

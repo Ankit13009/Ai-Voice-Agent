@@ -83,6 +83,18 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+# Hit counters live at module level rather than on the middleware instance, so
+# they can be inspected and cleared. Starlette builds middleware inside the ASGI
+# chain, and an instance nobody holds a reference to is state nobody can reset,
+# which makes the limiter untestable and leaks counts between test cases.
+_RATE_LIMIT_HITS: dict[str, deque[float]] = defaultdict(deque)
+
+
+def reset_rate_limits() -> None:
+    """Clear all counters. For tests, and for a manual unblock in an incident."""
+    _RATE_LIMIT_HITS.clear()
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Fixed-cost sliding-window limiter, applied only to sensitive prefixes.
 
@@ -98,7 +110,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         super().__init__(app)
         self.rules = rules
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
 
     def _rule_for(self, path: str) -> tuple[int, int] | None:
         for prefix, rule in self.rules.items():
@@ -123,7 +134,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         max_requests, window = rule
         key = self._client_key(request, path)
         now = time.monotonic()
-        bucket = self._hits[key]
+        bucket = _RATE_LIMIT_HITS[key]
 
         while bucket and now - bucket[0] > window:
             bucket.popleft()

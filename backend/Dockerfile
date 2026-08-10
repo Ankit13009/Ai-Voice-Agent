@@ -15,4 +15,7 @@ COPY . .
 
 # Fly injects PORT. The default matches the internal_port in fly.toml.
 ENV PORT=8080
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]
+# Migrate, then serve. Running migrations at container start keeps schema and
+# code deploying together; a schema change that fails stops the deploy instead
+# of leaving the new code running against the old tables.
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

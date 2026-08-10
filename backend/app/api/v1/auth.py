@@ -8,7 +8,7 @@ whole family.
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request
 from sqlalchemy import select, update
@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Lock after this many consecutive failures, for this long. Chosen so a human
+# who mistypes twice is never affected, while an online guessing attack is
+# reduced to a handful of attempts per hour.
+MAX_FAILED_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
 
 def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
@@ -53,6 +59,7 @@ def _user_dict(user: User) -> dict:
         "role": user.role.value,
         "business_id": user.business_id,
         "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None,
+        "must_change_password": user.must_change_password,
     }
 
 
@@ -99,14 +106,46 @@ async def login(payload: LoginRequest, request: Request, db: DbSession) -> dict:
         dummy_password_verify()
         raise InvalidCredentialsError()
 
+    now = datetime.now(timezone.utc)
+
+    # A locked account fails before the password is even checked, so a lockout
+    # cannot be probed by timing. The message is deliberately the same shape as
+    # a wrong password: telling an attacker they found a real account that is
+    # now locked is itself information.
+    if user.locked_until and user.locked_until > now:
+        remaining = int((user.locked_until - now).total_seconds() // 60) + 1
+        logger.warning("Login attempt on locked account %s", user.id)
+        raise InvalidCredentialsError(
+            f"Too many failed attempts. Try again in about {remaining} minute(s)."
+        )
+
     if not verify_password(payload.password, user.password_hash):
-        logger.info("Failed login for user %s", user.id)
+        user.failed_login_attempts += 1
+        if user.failed_login_attempts >= MAX_FAILED_ATTEMPTS:
+            user.locked_until = now + timedelta(minutes=LOCKOUT_MINUTES)
+            user.failed_login_attempts = 0
+            logger.warning(
+                "Locked account %s after %d failed attempts", user.id, MAX_FAILED_ATTEMPTS
+            )
+        else:
+            logger.info(
+                "Failed login for user %s (%d/%d)",
+                user.id,
+                user.failed_login_attempts,
+                MAX_FAILED_ATTEMPTS,
+            )
+        # Committed so the counter survives; the caller still sees a failure.
+        await db.commit()
         raise InvalidCredentialsError()
 
     if not user.is_active:
         raise InvalidCredentialsError("This account has been deactivated.")
 
-    user.last_login_at = datetime.now(timezone.utc)
+    # A successful login clears the counter: the failures were a forgotten
+    # password, not an attack.
+    user.failed_login_attempts = 0
+    user.locked_until = None
+    user.last_login_at = now
     tokens = await _issue_tokens(db, user)
 
     await write_audit_log(
@@ -199,6 +238,7 @@ async def change_password(
         raise ConflictError("The new password must be different from the current one.")
 
     row.password_hash = hash_password(payload.new_password)
+    row.must_change_password = False
 
     # Force every other session to re-authenticate with the new password.
     await db.execute(

@@ -129,6 +129,7 @@ export interface User {
   role: UserRole;
   business_id: string | null;
   last_login_at: string | null;
+  must_change_password?: boolean;
 }
 
 export interface TokenPair {
@@ -164,6 +165,25 @@ export interface StaffMember {
   google_calendar_id: string;
   consultation_duration_minutes: number;
   is_active: boolean;
+}
+
+export interface BusinessUser {
+  id: string;
+  email: string;
+  full_name: string;
+  role: UserRole;
+  is_active: boolean;
+  last_login_at: string | null;
+  /** True while a lockout from repeated failed logins is still in force. */
+  is_locked: boolean;
+  must_change_password: boolean;
+}
+
+/** Returned once, on create or reset. The password is not recoverable after this. */
+export interface TemporaryPassword {
+  id: string;
+  email: string;
+  temporary_password: string;
 }
 
 export interface IntegrationStatus {
@@ -222,6 +242,10 @@ export interface Business {
   agent_rules: string[];
   escalation_instructions: string;
 
+  /** 0 means keep indefinitely. */
+  transcript_retention_days: number;
+  recording_retention_days: number;
+
   agent_name: string;
   /** The number customers dial. Not editable from settings. */
   phone_number: string;
@@ -254,6 +278,8 @@ export interface BusinessUpdateRequest {
   intake_fields?: IntakeField[];
   agent_rules?: string[];
   escalation_instructions?: string;
+  transcript_retention_days?: number;
+  recording_retention_days?: number;
   address?: string;
   city?: string;
   contact_phone?: string;

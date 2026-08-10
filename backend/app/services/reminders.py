@@ -102,6 +102,11 @@ async def process_due_messages() -> int:
     return sent
 
 
+# Retention is a daily concern, not a per-tick one. Tracking the last run in
+# memory is enough: a restart simply causes one extra sweep, which is idempotent.
+RETENTION_INTERVAL_SECONDS = 24 * 60 * 60
+
+
 async def reminder_loop(stop_event: asyncio.Event) -> None:
     """Run `process_due_messages` on an interval until asked to stop.
 
@@ -113,11 +118,27 @@ async def reminder_loop(stop_event: asyncio.Event) -> None:
     interval = max(30, settings.reminder_poll_seconds)
     logger.info("Reminder scheduler started (every %ss).", interval)
 
+    last_retention = 0.0
+
     while not stop_event.is_set():
         try:
             await process_due_messages()
         except Exception:  # noqa: BLE001
             logger.exception("Reminder loop iteration failed; continuing.")
+
+        # Piggyback the daily retention sweep on this loop. A failure here must
+        # not stop reminders, which are time-critical; retention is not.
+        elapsed = asyncio.get_running_loop().time() - last_retention
+        if elapsed >= RETENTION_INTERVAL_SECONDS or last_retention == 0.0:
+            try:
+                from app.services.retention import run_retention_sweep
+
+                totals = await run_retention_sweep()
+                last_retention = asyncio.get_running_loop().time()
+                if totals["transcripts"] or totals["recordings"]:
+                    logger.info("Retention sweep: %s", totals)
+            except Exception:  # noqa: BLE001
+                logger.exception("Retention sweep failed; will retry next cycle.")
 
         try:
             # Wait on the stop event rather than sleeping, so shutdown is prompt

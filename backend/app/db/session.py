@@ -66,12 +66,22 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 
 
 async def init_db() -> None:
-    """Create tables that don't exist yet.
+    """Ensure the schema exists.
 
-    Fine for the first deploy and for local development. Once there is
-    production data, schema changes must go through Alembic instead: this call
-    only ever creates, it never alters an existing table.
+    `create_all` only ever creates; it never alters. That was fine before there
+    was production data, but a column added to a model would then silently not
+    exist in a database that already had the table, and the failure would show
+    up as a query error at runtime rather than at deploy time.
+
+    Migrations are now the source of truth. This is kept as a development
+    convenience only, and refuses to run in production so that a missed
+    migration fails the deploy instead of being papered over.
     """
+    settings = get_settings()
+    if settings.is_production:
+        logger.info("Production: schema is managed by Alembic (alembic upgrade head).")
+        return
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database ready (%s)", "sqlite" if _is_sqlite else "postgres")
