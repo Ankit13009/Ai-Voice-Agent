@@ -81,6 +81,16 @@ def _diff(wanted, live, path: str = "") -> list[tuple[str, str, str]]:
             if path == "server" and key == "secret":
                 continue
             out.extend(_diff(want_value, live.get(key), f"{path}.{key}" if path else key))
+
+        # Fields we removed are invisible to the walk above, since it only
+        # follows what we send. That hid a real change: dropping staff_member_id
+        # from the tool schemas showed no diff at all. Only checked under
+        # model.tools, which we author in full; elsewhere VAPI adds its own
+        # defaults and reporting them would be noise.
+        if path.startswith("model.tools"):
+            for key in live:
+                if key not in wanted and key not in IGNORED_KEYS:
+                    out.append((f"{path}.{key}", _summarise(live[key]), "removed"))
         return out
 
     if isinstance(wanted, list):
