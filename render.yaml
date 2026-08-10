@@ -11,12 +11,12 @@ services:
     rootDir: backend
     dockerfilePath: ./Dockerfile
     plan: free
-    # Oregon, deliberately. VAPI runs in AWS us-west-2 and calls this server's
-    # tool webhook *during* a live conversation, so the round trip is heard by
-    # the caller as dead air. Hosting closer to India would improve dashboard
-    # latency, which nobody notices, at the cost of in-call latency, which
-    # everybody does.
-    region: oregon
+    # Ohio, to sit next to the database. VAPI runs in AWS us-west-2, so Oregon
+    # would shave one hop off the inbound webhook, but a single tool call makes
+    # several database queries and each of those would then cross the country.
+    # One 60ms hop beats four. If the database ever moves to us-west, move this
+    # with it.
+    region: ohio
     healthCheckPath: /health
     envVars:
       - key: APP_ENV

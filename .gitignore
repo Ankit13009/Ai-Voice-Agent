@@ -26,3 +26,6 @@ out/
 
 # Alembic local scratch
 backend/alembic/__pycache__/
+
+# Generated production env, contains secrets
+backend/render-env.txt
