@@ -101,6 +101,12 @@ def _intake_block(business: Business, staff: list[StaffMember] | None = None) ->
     if not [member for member in (staff or []) if member.is_active]:
         fields = [f for f in fields if f.get("key") != "staff_preference"]
 
+    # The caller's number has a dedicated section of its own, which explains the
+    # fallback behaviour properly. Listing it here as well spends tokens on every
+    # turn to repeat a rule, and two statements of the same rule are two things
+    # that can disagree after an edit.
+    fields = [f for f in fields if f.get("key") != "customer_phone"]
+
     # Intake labels may carry {staff_singular} / {customer_singular} so a shared
     # field definition reads correctly in every trade ("Preferred doctor",
     # "Preferred stylist"). A placeholder we do not supply renders as itself
@@ -240,6 +246,9 @@ with nothing.
 - Never claim something is booked, moved, or cancelled until the matching tool has \
 returned success.
 {escalation_section}
+## What to collect
+{_intake_block(business, staff)}
+
 ## Booking a new {booking}
 Be quick. The caller wants a time, not a conversation. Finish in THREE exchanges:
 one question, one offer of times, one confirmation.
@@ -248,10 +257,10 @@ Every extra exchange costs the business real money and the caller real seconds,
 so combine questions wherever they can be combined and never ask anything you
 can look up or infer.
 
-1. Ask for their name AND what they need in ONE sentence, not two questions.
-   "आपका नाम और किस चीज़ के लिए आना है?" Asking these separately costs the
-   caller an extra ten seconds and gets you nothing. Whatever they say is
-   enough: "checkup", "fever", "follow-up". Never ask again.
+1. Collect everything in "What to collect" that they have not already told you,
+   in ONE combined question rather than one question each. Asking separately
+   costs the caller ten seconds per question and gets you nothing. Whatever
+   they say is enough: "checkup", "fever", "follow-up". Never ask twice.
 2. Call `check_availability`, then read back THREE times in one sentence, not
    one. Offering a single time means anyone who cannot make it forces a whole
    extra exchange; three lets them pick immediately. "कल नौ बजे, सवा नौ, या
