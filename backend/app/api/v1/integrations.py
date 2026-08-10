@@ -17,6 +17,7 @@ from typing import Annotated
 import jwt
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -26,7 +27,7 @@ from app.core.deps import (
     RequireOwner,
     write_audit_log,
 )
-from app.core.errors import BadRequestError, NotFoundError
+from app.core.errors import BadRequestError, IntegrationNotConfiguredError, NotFoundError
 from app.core.response import ok
 from app.db.models import CalendarCredential, Business
 from app.services import google_calendar as gcal
@@ -34,6 +35,17 @@ from app.services import google_calendar as gcal
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/integrations", tags=["integrations"])
+
+
+class ServiceAccountConnectRequest(BaseModel):
+    """Which calendar to use. Usually the business's Google address.
+
+    Not defaulted to "primary": with a service account, "primary" means the
+    service account's own empty calendar, which would accept every booking and
+    show the business nothing.
+    """
+
+    calendar_id: str = Field(..., min_length=3, max_length=255)
 
 OAUTH_STATE_TTL = timedelta(minutes=10)
 
@@ -176,4 +188,109 @@ async def google_disconnect(
     return ok(
         None,
         message="Google Calendar disconnected. The agent can no longer check or book slots.",
+    )
+
+
+@router.get("/google/service-account", summary="Service account details for sharing")
+async def google_service_account_info(
+    business_id: ActiveBusiness, db: DbSession, _owner: RequireOwner
+) -> dict:
+    """The address a business shares its calendar with, and whether it is in use.
+
+    Offered as an alternative to signing in with Google. Sharing a calendar has
+    no expiry, needs no consent screen, and is unaffected by Google's
+    verification queue or its 7-day limit on unverified apps, all of which make
+    the OAuth route fragile for clients we cannot support hands-on.
+    """
+    email = gcal.service_account_email()
+    credential = (
+        await db.execute(
+            select(CalendarCredential).where(CalendarCredential.business_id == business_id)
+        )
+    ).scalar_one_or_none()
+
+    return ok(
+        {
+            "available": bool(email),
+            "service_account_email": email,
+            "in_use": bool(credential and credential.auth_mode == "service_account"),
+            "calendar_id": credential.calendar_id if credential else "",
+        }
+    )
+
+
+@router.post("/google/service-account", summary="Use a shared calendar instead of signing in")
+async def connect_service_account(
+    payload: ServiceAccountConnectRequest,
+    business_id: ActiveBusiness,
+    db: DbSession,
+    request: Request,
+    _owner: RequireOwner,
+) -> dict:
+    """Point this business at a calendar that has been shared with our service account.
+
+    Verified immediately rather than trusted: without a check, a typo in the
+    address or a calendar shared with the wrong permission would be reported as
+    connected and would then fail on the first real call, which is the worst
+    time to discover it.
+    """
+    email = gcal.service_account_email()
+    if not email:
+        raise IntegrationNotConfiguredError(
+            "No Google service account is configured on this server."
+        )
+
+    credential = (
+        await db.execute(
+            select(CalendarCredential).where(CalendarCredential.business_id == business_id)
+        )
+    ).scalar_one_or_none()
+    if credential is None:
+        credential = CalendarCredential(business_id=business_id)
+        db.add(credential)
+
+    credential.auth_mode = "service_account"
+    credential.calendar_id = payload.calendar_id.strip()
+    credential.connected_email = payload.calendar_id.strip()
+    credential.is_connected = True
+    credential.last_error = ""
+    # No refresh token exists in this mode, and leaving a stale one behind would
+    # be a live credential kept for no reason.
+    credential.encrypted_refresh_token = ""
+    credential.encrypted_access_token = ""
+    credential.access_token_expires_at = None
+    await db.flush()
+
+    try:
+        await gcal.get_busy_windows(
+            db,
+            business_id,
+            credential.calendar_id,
+            datetime.now(timezone.utc),
+            datetime.now(timezone.utc) + timedelta(days=1),
+        )
+    except Exception as exc:  # noqa: BLE001
+        credential.is_connected = False
+        credential.last_error = (
+            "Could not read that calendar. Check it is shared with "
+            f"{email} with 'Make changes to events' permission."
+        )
+        await db.commit()
+        logger.warning("Service account calendar check failed for %s: %s", business_id, exc)
+        raise BadRequestError(credential.last_error) from exc
+
+    await write_audit_log(
+        db,
+        request,
+        action="integration.google_service_account_connected",
+        business_id=business_id,
+        resource_type="calendar_credential",
+        resource_id=credential.id,
+        metadata={"calendar_id": credential.calendar_id},
+    )
+    await db.commit()
+
+    return ok(
+        {"connected": True, "calendar_id": credential.calendar_id},
+        message="Calendar connected. No sign-in needed and this will not expire.",
     )

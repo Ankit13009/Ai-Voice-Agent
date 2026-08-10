@@ -24,7 +24,10 @@ from datetime import datetime, time, timedelta, timezone
 from urllib.parse import urlencode
 from zoneinfo import ZoneInfo
 
+import json
+
 import httpx
+import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -182,6 +185,76 @@ async def save_credentials(
     return cred
 
 
+# A service-account token is minted from the key rather than stored, so it is
+# cached in memory keyed by nothing more than expiry. One process, one account.
+_SERVICE_TOKEN: dict[str, object] = {"token": "", "expires_at": None}
+
+
+def service_account_email() -> str:
+    """The address a business shares its calendar with. Empty if not configured."""
+    raw = get_settings().google_service_account_json.strip()
+    if not raw:
+        return ""
+    try:
+        return json.loads(raw).get("client_email", "")
+    except (ValueError, AttributeError):
+        logger.error("GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON.")
+        return ""
+
+
+async def _service_account_token() -> str:
+    """Mint an access token by signing a JWT with the service account key.
+
+    This is the whole reason the mode exists: there is no refresh token to
+    expire, no consent to re-obtain, and no user whose password change revokes
+    it. Google's 7-day limit on unverified apps simply does not apply.
+    """
+    now = datetime.now(timezone.utc)
+    cached = _SERVICE_TOKEN.get("expires_at")
+    if _SERVICE_TOKEN.get("token") and isinstance(cached, datetime) and cached > now + TOKEN_REFRESH_MARGIN:
+        return str(_SERVICE_TOKEN["token"])
+
+    raw = get_settings().google_service_account_json.strip()
+    if not raw:
+        raise IntegrationNotConfiguredError("No Google service account is configured on this server.")
+
+    try:
+        key = json.loads(raw)
+    except ValueError as exc:
+        raise IntegrationNotConfiguredError("The Google service account key is not valid JSON.") from exc
+
+    assertion = jwt.encode(
+        {
+            "iss": key["client_email"],
+            "scope": " ".join(REQUIRED_SCOPES),
+            "aud": GOOGLE_TOKEN_URL,
+            "iat": int(now.timestamp()),
+            "exp": int((now + timedelta(minutes=60)).timestamp()),
+        },
+        key["private_key"],
+        algorithm="RS256",
+    )
+
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        response = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                "assertion": assertion,
+            },
+        )
+
+    if response.status_code != 200:
+        logger.error("Service account token request failed %s: %s", response.status_code, response.text[:300])
+        raise UpstreamError("Google")
+
+    payload = response.json()
+    token = payload.get("access_token", "")
+    _SERVICE_TOKEN["token"] = token
+    _SERVICE_TOKEN["expires_at"] = now + timedelta(seconds=int(payload.get("expires_in", 3600)))
+    return token
+
+
 async def _get_access_token(db: AsyncSession, business_id: str) -> tuple[str, CalendarCredential]:
     """Return a valid access token, refreshing it if needed."""
     cred = (
@@ -195,6 +268,11 @@ async def _get_access_token(db: AsyncSession, business_id: str) -> tuple[str, Ca
             "This business has not connected a Google Calendar yet.",
             log_context={"business_id": business_id},
         )
+
+    # Service-account businesses hold no refresh token at all, so everything
+    # below this point is irrelevant to them.
+    if cred.auth_mode == "service_account":
+        return await _service_account_token(), cred
 
     cached = decrypt_secret(cred.encrypted_access_token)
     expires_at = cred.access_token_expires_at

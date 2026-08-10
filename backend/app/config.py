@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     google_client_secret: str = Field(default="")
     google_oauth_redirect_uri: str = Field(default="")
 
+    # A service account is the alternative to per-business OAuth: the business
+    # shares its calendar with this account's address instead of signing in.
+    # Nothing expires, there is no test-user list, and Google's verification
+    # queue is irrelevant. Holds the JSON key file's contents.
+    google_service_account_json: str = Field(
+        default="", description="Service account key JSON. Empty means OAuth only."
+    )
+
     # --- WhatsApp (Meta Cloud API, not WATI) ---
     whatsapp_access_token: str = Field(default="", description="Long-lived system-user token.")
     whatsapp_phone_number_id: str = Field(default="")

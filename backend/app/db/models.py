@@ -538,6 +538,14 @@ class CalendarCredential(Base, TenantMixin, TimestampMixin):
     connected_email: Mapped[str] = mapped_column(String(255), default="")
     calendar_id: Mapped[str] = mapped_column(String(255), default="primary")
 
+    # "oauth": the owner signed in and we hold a refresh token, which Google
+    # expires after 7 days while the app is unverified and revokes whenever the
+    # user changes their password.
+    # "service_account": the business shared its calendar with our fixed service
+    # account address instead. Nothing to expire, nothing to re-consent, and no
+    # Google verification queue in the way.
+    auth_mode: Mapped[str] = mapped_column(String(20), default="oauth", server_default="oauth")
+
     encrypted_refresh_token: Mapped[str] = mapped_column(Text, default="")
     encrypted_access_token: Mapped[str] = mapped_column(Text, default="")
     access_token_expires_at: Mapped[datetime | None] = mapped_column(
