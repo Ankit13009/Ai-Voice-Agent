@@ -288,7 +288,19 @@ async def outbound_test_call(
                 "No phone number on the VAPI account. Buy one in the VAPI dashboard "
                 "under Phone Numbers, then try again."
             )
-        phone_number_id = numbers[0]["id"]
+
+        # Prefer a number from a real carrier over a Vapi-issued free one.
+        # Free Vapi numbers cannot place international calls at all, so on an
+        # account holding both, picking the first would fail with
+        # 'error-vapi-number-international' even though a working number exists.
+        byo = [n for n in numbers if n.get("provider") != "vapi"]
+        chosen = (byo or numbers)[0]
+        phone_number_id = chosen["id"]
+        logger.info(
+            "Outbound test call using %s number %s",
+            chosen.get("provider"),
+            chosen.get("number"),
+        )
 
     call = await vapi.start_outbound_call(
         assistant_id=business.vapi_assistant_id,
