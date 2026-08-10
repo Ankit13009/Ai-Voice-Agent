@@ -170,8 +170,20 @@ def validate_production_config(settings: Settings) -> None:
     if not settings.vapi_webhook_secret:
         problems.append("VAPI_WEBHOOK_SECRET is not set (webhooks would be unauthenticated).")
 
-    if not settings.whatsapp_app_secret:
-        problems.append("WHATSAPP_APP_SECRET is not set (webhooks would be unauthenticated).")
+    # Only demanded once WhatsApp is actually wired up. Requiring it always
+    # would block deploying the phone agent before the Meta account exists,
+    # and it is safe to defer: verify_meta_signature() returns False on an
+    # empty secret, so an unconfigured deployment rejects every webhook rather
+    # than trusting it. The moment a token or phone number id appears, the
+    # endpoint is live and the secret becomes mandatory.
+    whatsapp_configured = bool(
+        settings.whatsapp_access_token or settings.whatsapp_phone_number_id
+    )
+    if whatsapp_configured and not settings.whatsapp_app_secret:
+        problems.append(
+            "WHATSAPP_APP_SECRET is not set, but WhatsApp is configured "
+            "(webhooks would be unauthenticated)."
+        )
 
     if not problems:
         return
