@@ -237,7 +237,10 @@ class _Defaulting(dict):
         return "{" + key + "}"
 
 
-def build_vapi_tools(business: "Business | None" = None) -> list[dict[str, Any]]:
+def build_vapi_tools(
+    business: "Business | None" = None,
+    staff_members: "list | None" = None,
+) -> list[dict[str, Any]]:
     """Attach our webhook URL to every tool, in VAPI's expected shape.
 
     Descriptions are rendered in the tenant's own vocabulary, so a salon's agent
@@ -258,6 +261,18 @@ def build_vapi_tools(business: "Business | None" = None) -> list[dict[str, Any]]
     tools: list[dict[str, Any]] = [
         {**_fill_labels(tool, labels), "server": {"url": url}} for tool in ALL_TOOLS
     ]
+
+    # A business with no individual staff has nothing to choose between, and a
+    # parameter is an affordance: leaving staff_member_id on the schema invited
+    # the agent to ask which doctor the caller wanted at a clinic that has none.
+    # Removing it is stronger than instructing against it, and costs fewer
+    # tokens on every turn.
+    if business is not None and not [s for s in (staff_members or []) if s.is_active]:
+        for tool in tools:
+            properties = (
+                tool.get("function", {}).get("parameters", {}).get("properties", {})
+            )
+            properties.pop("staff_member_id", None)
 
     # Handing off to a human is VAPI's own transferCall tool rather than one of
     # ours: the call has to be physically moved, which a webhook response cannot

@@ -70,9 +70,13 @@ def build_greeting(business: Business) -> str:
 def _staff_block(business: Business, staff: list[StaffMember]) -> str:
     active = [member for member in staff if member.is_active]
     if not active:
+        # An instruction, not a note. Stating only that there are none still left
+        # the agent asking which one the caller wanted, because everything else
+        # in the prompt talked about them as though they existed.
         return (
-            f"  - No individual {business.label('staff_plural').lower()} to choose from; "
-            "the business runs one shared schedule."
+            f"  - One shared schedule. There are no individual "
+            f"{business.label('staff_plural').lower()} to choose from, so never ask "
+            f"which {business.label('staff_singular').lower()} they want."
         )
     return "\n".join(
         f"  - {member.name}"
@@ -82,11 +86,20 @@ def _staff_block(business: Business, staff: list[StaffMember]) -> str:
     )
 
 
-def _intake_block(business: Business) -> str:
+def _intake_block(business: Business, staff: list[StaffMember] | None = None) -> str:
     """What the agent must collect, rendered from the tenant's own config."""
     fields = business.intake_fields or []
     if not fields:
         return "1. The caller's name.\n2. A phone number to reach them on."
+
+    # A business with no individual staff runs one shared schedule, so asking
+    # which doctor they would like is asking about something that does not
+    # exist. The preset includes the field because most clinics eventually add
+    # staff, but until they do the prompt would tell the agent to collect a
+    # preference while also stating there is nobody to choose from, and the
+    # agent follows the instruction rather than the caveat.
+    if not [member for member in (staff or []) if member.is_active]:
+        fields = [f for f in fields if f.get("key") != "staff_preference"]
 
     # Intake labels may carry {staff_singular} / {customer_singular} so a shared
     # field definition reads correctly in every trade ("Preferred doctor",
@@ -134,6 +147,16 @@ def build_system_prompt(business: Business, staff: list[StaffMember] | None = No
     staff_plural = business.label("staff_plural").lower()
     booking = business.label("booking_singular").lower()
 
+    has_staff = bool([member for member in staff if member.is_active])
+    staff_capability = (
+        f" Also which {staff_plural} are available." if has_staff else ""
+    )
+    staff_waste_rule = (
+        f"- Do not ask their preferred {staff_singular} unless they raise it themselves."
+        if has_staff
+        else f"- Never mention or ask about a {staff_singular}. There is one shared schedule."
+    )
+
     escalation = (business.escalation_instructions or "").strip()
     escalation_section = f"\n## When something is urgent\n{escalation}\n" if escalation else ""
     notes_line = f"- Additional facts: {business.agent_notes}" if business.agent_notes else ""
@@ -166,7 +189,7 @@ If it returns nothing, carry on normally.
 1. Book a new {booking}.
 2. Reschedule an existing {booking}.
 3. Cancel an existing {booking}.
-4. Answer basic questions about timings, location, and which {staff_plural} are available.
+4. Answer basic questions about timings and location.{staff_capability}
 
 ## How to talk (this is a live phone call)
 - Keep every reply to one short sentence, two at most when reading out times.
@@ -250,7 +273,7 @@ Things that waste the caller's time. Do not do them:
 - Do not ask "is that correct?" about anything except the appointment time.
 - Do not explain what you are about to do. Just do it.
 - Do not ask for symptoms or detail beyond a short reason.
-- Do not ask their preferred {staff_singular} unless they raise it themselves.
+{staff_waste_rule}
 
 Keep every reply under about fifteen words unless you are reading out times.
 

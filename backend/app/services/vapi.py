@@ -92,7 +92,7 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
             "messages": [
                 {"role": "system", "content": build_system_prompt(business, staff_members)}
             ],
-            "tools": build_vapi_tools(business),
+            "tools": build_vapi_tools(business, staff_members),
         },
         "transcriber": {
             "provider": "deepgram",
