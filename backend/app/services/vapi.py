@@ -118,8 +118,15 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
         # Callers pause mid-sentence when reading out a phone number or checking
         # a calendar. A short endpointing window cuts them off.
         "startSpeakingPlan": {"waitSeconds": 0.6},
-        "silenceTimeoutSeconds": 30,
-        "maxDurationSeconds": 900,
+        # Both of these are cost ceilings as much as UX settings. Every second of
+        # a call is billed across four vendors at once (VAPI, telephony, STT,
+        # TTS), so a caller who puts the phone down without hanging up, or a
+        # wedged conversation, bills until one of these fires. A booking takes
+        # one to two minutes; 15 minutes was ten times more rope than any real
+        # call needs and, on a small prepaid balance, a single stuck call could
+        # eat most of it.
+        "silenceTimeoutSeconds": 20,
+        "maxDurationSeconds": 420,
         "endCallMessage": "Thank you for calling. Take care.",
         "backgroundDenoisingEnabled": True,
         "recordingEnabled": True,
