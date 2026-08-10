@@ -49,15 +49,23 @@ def build_greeting(business: Business) -> str:
     if business.greeting_en:
         return business.greeting_en
 
+    # She introduces herself as calling *from* the business, the way a human
+    # receptionist does. Naming the business and then herself as two clipped
+    # sentences ("नमस्ते, Next Edge Global. This is Asha.") reads like a label
+    # being announced rather than a person answering the phone, and callers hear
+    # it as a recording.
     if business.primary_language == Language.HINDI:
         return (
-            f"नमस्ते, {business.name} में आपका स्वागत है। मैं {business.agent_name} "
-            "बोल रही हूँ। मैं आपकी क्या मदद कर सकती हूँ?"
+            f"नमस्ते, मैं {business.name} से {business.agent_name} बोल रही हूँ। "
+            "बताइए, मैं आपकी क्या मदद कर सकती हूँ?"
         )
     if business.primary_language == Language.MIXED:
-        return f"नमस्ते, {business.name}. This is {business.agent_name}. मैं आपकी क्या मदद कर सकती हूँ?"
+        return (
+            f"नमस्ते, मैं {business.name} से {business.agent_name} बोल रही हूँ। "
+            "मैं आपकी क्या मदद कर सकती हूँ?"
+        )
     return (
-        f"Thank you for calling {business.name}, this is {business.agent_name}. "
+        f"Thank you for calling {business.name}, this is {business.agent_name} speaking. "
         "How can I help you today?"
     )
 
