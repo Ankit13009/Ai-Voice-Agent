@@ -30,6 +30,24 @@ import {
 import type { StaffMember } from "@/types/api";
 import { TestCall } from "@/components/TestCall";
 import { UsersCard } from "@/components/settings/UsersCard";
+import {
+  SettingsNav,
+  type SettingsSection,
+  type SettingsSectionId,
+} from "@/components/settings/SettingsNav";
+
+// Ordered by how often an owner actually needs them, not by how the code is
+// organised: the agent's wording and opening hours change far more than data
+// retention ever will.
+const SECTIONS: SettingsSection[] = [
+  { id: "agent", label: "Agent", hint: "Name, language, greeting" },
+  { id: "schedule", label: "Opening hours", hint: "Days, times, slot length" },
+  { id: "staff", label: "Staff", hint: "Who can be booked" },
+  { id: "integrations", label: "Calendar", hint: "Google Calendar and test calls" },
+  { id: "whatsapp", label: "WhatsApp", hint: "Confirmations and reminders" },
+  { id: "users", label: "Users", hint: "Dashboard sign-ins" },
+  { id: "data", label: "Data", hint: "How long recordings are kept" },
+];
 
 const LANGUAGE_OPTIONS = [
   { value: "hi-en", label: "Hindi + English (recommended)" },
@@ -51,6 +69,20 @@ export default function SettingsPage() {
   const toast = useToast();
   const searchParams = useSearchParams();
   const business = useApiQuery((signal) => businessApi.me(signal), []);
+  const [section, setSection] = useState<SettingsSectionId>("agent");
+
+  // Returning from the Google consent screen should land on the section that
+  // sent you there, not back at the top of the page wondering if it worked.
+  useEffect(() => {
+    const requested = searchParams.get("section");
+    if (searchParams.get("google")) {
+      setSection("integrations");
+      return;
+    }
+    if (requested && SECTIONS.some((s) => s.id === requested)) {
+      setSection(requested as SettingsSectionId);
+    }
+  }, [searchParams]);
 
   // The Google OAuth callback redirects back here with a status flag, since a
   // browser redirect cannot carry an Authorization header to report its result.
@@ -65,7 +97,7 @@ export default function SettingsPage() {
     } else if (googleResult) {
       toast.show("Could not connect Google Calendar. Please try again.", "error");
     }
-    window.history.replaceState({}, "", "/settings");
+    window.history.replaceState({}, "", "/settings?section=integrations");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
@@ -85,15 +117,42 @@ export default function SettingsPage() {
         description={`${business.data.name} · customers dial ${business.data.phone_number}`}
       />
 
-      <div className="flex flex-col gap-4">
-        <TestCall />
-        <IntegrationsCard business={business.data} onChange={business.refetch} />
-        <AgentCard business={business.data} onSaved={business.refetch} />
-        <ScheduleCard business={business.data} onSaved={business.refetch} />
-        <RemindersCard business={business.data} onSaved={business.refetch} />
-        <RetentionCard business={business.data} onSaved={business.refetch} />
-        <UsersCard />
-        <DoctorsCard business={business.data} onChange={business.refetch} />
+      <div className="grid gap-6 lg:grid-cols-[220px_1fr] items-start">
+        <SettingsNav
+          sections={SECTIONS}
+          active={section}
+          onSelect={(id) => {
+            setSection(id);
+            // Shallow, so the section survives a refresh or a shared link
+            // without re-running the page's data fetch.
+            window.history.replaceState({}, "", `/settings?section=${id}`);
+          }}
+        />
+
+        <div className="flex flex-col gap-4 min-w-0">
+          {section === "agent" && (
+            <AgentCard business={business.data} onSaved={business.refetch} />
+          )}
+          {section === "schedule" && (
+            <ScheduleCard business={business.data} onSaved={business.refetch} />
+          )}
+          {section === "staff" && (
+            <DoctorsCard business={business.data} onChange={business.refetch} />
+          )}
+          {section === "integrations" && (
+            <>
+              <IntegrationsCard business={business.data} onChange={business.refetch} />
+              <TestCall />
+            </>
+          )}
+          {section === "whatsapp" && (
+            <RemindersCard business={business.data} onSaved={business.refetch} />
+          )}
+          {section === "users" && <UsersCard />}
+          {section === "data" && (
+            <RetentionCard business={business.data} onSaved={business.refetch} />
+          )}
+        </div>
       </div>
     </>
   );
