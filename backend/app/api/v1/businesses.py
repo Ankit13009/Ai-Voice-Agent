@@ -189,7 +189,13 @@ async def _sync_assistant(db, business: Business) -> str:
 
     try:
         if business.vapi_assistant_id:
-            await vapi.update_assistant(business, list(staff_members))
+            recreated_id = await vapi.update_assistant(business, list(staff_members))
+            if recreated_id:
+                # The stored id was not in this VAPI account, so a fresh
+                # assistant was made. Persist it or the next save recreates
+                # again, littering the account with orphans.
+                business.vapi_assistant_id = recreated_id
+                await db.flush()
             return ""
 
         assistant_id = await vapi.create_assistant(business, list(staff_members))

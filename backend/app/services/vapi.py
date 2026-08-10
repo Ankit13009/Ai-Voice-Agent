@@ -127,6 +127,13 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
     }
 
 
+class VapiResourceMissing(Exception):
+    """The stored VAPI id does not exist in the account the API key points at.
+
+    Recoverable, unlike an outage: the resource can simply be recreated.
+    """
+
+
 async def _request(method: str, path: str, json_body: dict | None = None) -> dict:
     async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
         response = await client.request(
@@ -152,6 +159,13 @@ async def _request(method: str, path: str, json_body: dict | None = None) -> dic
             log_context={"path": path},
         )
 
+    # A 404 means the assistant id we stored is not in the account the current
+    # API key points at: it was deleted in the VAPI dashboard, or the key was
+    # swapped to a different account. Distinguished from a real outage so the
+    # caller can recreate rather than failing forever on a dead id.
+    if response.status_code == 404:
+        raise VapiResourceMissing(path)
+
     raise UpstreamError("VAPI", log_context={"status": response.status_code, "path": path})
 
 
@@ -163,22 +177,37 @@ async def create_assistant(business: Business, staff_members: list[StaffMember])
     return assistant_id
 
 
-async def update_assistant(business: Business, staff_members: list[StaffMember]) -> None:
+async def update_assistant(business: Business, staff_members: list[StaffMember]) -> str:
     """Re-push the assistant after a settings change.
 
     Called whenever business hours, greeting, language, or staff_members change: the
     prompt embeds those facts, so a stale assistant would quote last week's
     timings to callers.
+
+    Returns a new assistant id if the stored one had to be recreated, otherwise
+    an empty string. Recreation happens when the id is missing from the account
+    the API key points at, which is the normal case after moving a deployment to
+    a client's own VAPI account, and also after someone deletes the assistant in
+    the dashboard. Without it the business would 404 on every settings save and
+    could never get a working assistant back.
     """
     if not business.vapi_assistant_id:
         logger.info("Business %s has no VAPI assistant to update.", business.id)
-        return
-    await _request(
-        "PATCH",
-        f"/assistant/{business.vapi_assistant_id}",
-        build_assistant_payload(business, staff_members),
-    )
+        return ""
+
+    payload = build_assistant_payload(business, staff_members)
+    try:
+        await _request("PATCH", f"/assistant/{business.vapi_assistant_id}", payload)
+    except VapiResourceMissing:
+        logger.warning(
+            "VAPI assistant %s is missing for business %s; recreating it.",
+            business.vapi_assistant_id,
+            business.id,
+        )
+        return await create_assistant(business, staff_members)
+
     logger.info("Updated VAPI assistant %s for business %s", business.vapi_assistant_id, business.id)
+    return ""
 
 
 async def attach_phone_number(phone_number_id: str, assistant_id: str) -> None:
