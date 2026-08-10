@@ -15,6 +15,18 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
+# Query parameters libpq understands but asyncpg does not. Passing any of them
+# through raises TypeError on connect, which reads as an unrelated crash.
+_LIBPQ_ONLY_PARAMS = {
+    "sslmode",
+    "channel_binding",
+    "sslrootcert",
+    "sslcert",
+    "sslkey",
+    "gssencmode",
+    "target_session_attrs",
+}
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -112,10 +124,17 @@ class Settings(BaseSettings):
             url = "postgresql://" + url[len("postgres://") :]
         if url.startswith("postgresql://"):
             url = "postgresql+asyncpg://" + url[len("postgresql://") :]
-        # asyncpg configures TLS via connect_args, and chokes on libpq's sslmode.
-        if "+asyncpg" in url and "sslmode=" in url:
+        # asyncpg takes its TLS settings through connect_args and raises on
+        # libpq-only query parameters. Hosted Postgres providers hand these out
+        # by default (Neon appends both sslmode and channel_binding), so a URL
+        # copied straight from their dashboard would fail at connect time.
+        if "+asyncpg" in url and "?" in url:
             base, _, query = url.partition("?")
-            kept = [p for p in query.split("&") if not p.startswith("sslmode=")]
+            kept = [
+                part
+                for part in query.split("&")
+                if part and part.split("=")[0] not in _LIBPQ_ONLY_PARAMS
+            ]
             url = base + ("?" + "&".join(kept) if kept else "")
         return url
 

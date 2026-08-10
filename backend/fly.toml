@@ -1,0 +1,48 @@
+app = "clinic-receptionist-api"
+
+# Seattle, deliberately. VAPI runs in AWS us-west-2 (Oregon) and calls this
+# server's tool webhook *during* a live conversation: check_availability runs
+# while the caller is waiting. Hosting in Mumbai would be better for dashboard
+# latency but would add a Pacific round trip to every one of those calls, which
+# the caller hears as dead air. Dashboard requests are not time-critical; a
+# mid-call tool response is.
+#
+# This changes if the voice pipeline is ever self-hosted in India, at which
+# point the whole path should move to `bom`.
+primary_region = "sea"
+
+[build]
+
+[env]
+  PORT = "8080"
+  APP_ENV = "production"
+  DEFAULT_TIMEZONE = "Asia/Kolkata"
+  REMINDER_SCHEDULER_ENABLED = "true"
+  REMINDER_POLL_SECONDS = "300"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Never sleep. An inbound call cannot wait for a cold start, and the reminder
+  # scheduler must keep running to send the 24h and 2h WhatsApp messages.
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+    hard_limit = 250
+
+[checks]
+  [checks.health]
+    type = "http"
+    port = 8080
+    path = "/health"
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "20s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

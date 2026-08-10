@@ -1,0 +1,65 @@
+# Render blueprint. Point Render at this repo and it reads this file.
+#
+# Free tier caveat, handled deliberately below: a free web service sleeps after
+# 15 minutes of inactivity and takes 30-60 seconds to wake. That is fatal for a
+# live phone call, because VAPI's tool webhook would time out mid-conversation.
+# A keep-alive ping every 10 minutes prevents it (see DEPLOY.md).
+services:
+  - type: web
+    name: clinic-receptionist-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    # Oregon, deliberately. VAPI runs in AWS us-west-2 and calls this server's
+    # tool webhook *during* a live conversation, so the round trip is heard by
+    # the caller as dead air. Hosting closer to India would improve dashboard
+    # latency, which nobody notices, at the cost of in-call latency, which
+    # everybody does.
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PORT
+        value: 8080
+      - key: DEFAULT_TIMEZONE
+        value: Asia/Kolkata
+      - key: REMINDER_SCHEDULER_ENABLED
+        value: "true"
+      - key: REMINDER_POLL_SECONDS
+        value: "300"
+      # Everything below is set in the Render dashboard, not here. Secrets must
+      # never live in a file that is committed.
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: VAPI_API_KEY
+        sync: false
+      - key: VAPI_PUBLIC_KEY
+        sync: false
+      - key: VAPI_WEBHOOK_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_OAUTH_REDIRECT_URI
+        sync: false
+      - key: WHATSAPP_ACCESS_TOKEN
+        sync: false
+      - key: WHATSAPP_PHONE_NUMBER_ID
+        sync: false
+      - key: WHATSAPP_BUSINESS_ACCOUNT_ID
+        sync: false
+      - key: WHATSAPP_APP_SECRET
+        sync: false
+      - key: WHATSAPP_VERIFY_TOKEN
+        sync: false
