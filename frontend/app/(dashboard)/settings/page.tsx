@@ -374,12 +374,22 @@ function AgentCard({ business, onSaved }: { business: Business; onSaved: () => v
         </Field>
 
         <Field
-          label="Facts the agent may state"
+          label="About your business"
           className="md:col-span-2"
-          hint="Parking, insurance, walk-in policy. The agent never invents anything beyond this."
+          hint="Services you offer, prices, parking, insurance, walk-in policy. The agent answers from this if a caller asks, never invents anything beyond it, and never reads it out unprompted."
           error={fieldErrors.agent_notes}
         >
-          <Textarea value={notes} onChange={(event) => setNotes(event.target.value)} rows={3} />
+          <Textarea
+            value={notes}
+            onChange={(event) => setNotes(event.target.value)}
+            rows={5}
+            placeholder={
+              "We do general checkups, dental cleaning and root canal.\n" +
+              "Cleaning is around 1500 rupees, consultation is 500.\n" +
+              "Parking is available behind the building.\n" +
+              "We accept walk-ins only before 11am."
+            }
+          />
         </Field>
       </CardBody>
       <CardFooter>

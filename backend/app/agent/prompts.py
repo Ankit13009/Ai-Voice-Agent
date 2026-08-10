@@ -165,7 +165,17 @@ def build_system_prompt(business: Business, staff: list[StaffMember] | None = No
 
     escalation = (business.escalation_instructions or "").strip()
     escalation_section = f"\n## When something is urgent\n{escalation}\n" if escalation else ""
-    notes_line = f"- Additional facts: {business.agent_notes}" if business.agent_notes else ""
+    # Reference material, not a script. Without the second sentence the agent
+    # treats a list of services as something to recite, which is exactly the
+    # "the call got longer" failure: a caller who wanted an appointment now sits
+    # through a menu they did not ask for.
+    notes_line = (
+        f"- About this business, for answering questions ONLY if asked. Never "
+        f"volunteer it, never read it as a list, never offer it before booking: "
+        f"{business.agent_notes}"
+        if business.agent_notes
+        else ""
+    )
 
     return f"""You are {business.agent_name}, the phone receptionist for {business.name}, \
 {business.business_descriptor}. You are on a live phone call with a {customer} or someone \
@@ -261,6 +271,10 @@ can look up or infer.
    in ONE combined question rather than one question each. Asking separately
    costs the caller ten seconds per question and gets you nothing. Whatever
    they say is enough: "checkup", "fever", "follow-up". Never ask twice.
+   If their answer is empty of detail ("appointment", "just booking", "milna
+   hai"), accept it and move on. It is a booking, not a form: pressing for a
+   better answer costs seconds and annoys someone who has already told you
+   what they want.
 2. Call `check_availability`, then read back THREE times in one sentence, not
    one. Offering a single time means anyone who cannot make it forces a whole
    extra exchange; three lets them pick immediately. "कल नौ बजे, सवा नौ, या
