@@ -25,7 +25,9 @@ from sqlalchemy import (
     Text,
     Time,
     UniqueConstraint,
+    false,
     text,
+    true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -234,7 +236,7 @@ class Business(Base, TimestampMixin):
     # The most common objection from a business is "what if the AI cannot help?".
     # Without a number to fall back to, the honest answer is "the caller is
     # stuck", so this is part of the product rather than a nicety.
-    handoff_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    handoff_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     # Where to transfer to. Falls back to contact_phone when empty.
     handoff_phone: Mapped[str] = mapped_column(String(32), default="", server_default="")
 
@@ -243,8 +245,8 @@ class Business(Base, TimestampMixin):
     # a trial the owner is deciding whether this thing is working, and silence
     # feels like nothing is happening.
     owner_notify_phone: Mapped[str] = mapped_column(String(32), default="", server_default="")
-    notify_on_booking: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
-    daily_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("1"))
+    notify_on_booking: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
+    daily_summary_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     # Local hour to send the summary, in the business's own timezone.
     daily_summary_hour: Mapped[int] = mapped_column(Integer, default=9, server_default=text("9"))
     last_daily_summary_on: Mapped[str] = mapped_column(String(10), default="", server_default="")
@@ -304,7 +306,7 @@ class User(Base, TimestampMixin):
     failed_login_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     locked_until: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
     # Set when an owner resets this user's password; forces a change at next login.
-    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
 
     business: Mapped["Business | None"] = relationship(back_populates="users")
 
