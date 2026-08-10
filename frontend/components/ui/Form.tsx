@@ -222,8 +222,9 @@ export function Switch({
           <p className="text-xs text-ink-subtle mt-0.5">{description}</p>
         )}
       </div>
-      {/* A real checkbox under a styled track: keyboard, form semantics, and
-          screen-reader announcements all work without reimplementing them. */}
+      {/* A button with role="switch" rather than a styled checkbox: it carries
+          the same keyboard and screen-reader semantics, and aria-checked is the
+          single source of truth for both the visual state and assistive tech. */}
       <button
         id={id}
         type="button"
@@ -239,9 +240,13 @@ export function Switch({
           checked ? "bg-primary" : "bg-line-strong",
         )}
       >
+        {/* left-0 is load-bearing. Without a horizontal anchor `left` resolves to
+            auto, and an absolutely positioned child takes its static position
+            from the parent's text alignment: a button centres its content, so
+            the knob started 22px in and every state rendered outside the track. */}
         <span
           className={cn(
-            "absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
+            "absolute left-0 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-200",
             checked ? "translate-x-[22px]" : "translate-x-0.5",
           )}
         />
