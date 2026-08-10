@@ -78,6 +78,16 @@ class Slot:
         return local.strftime("%A %d %b, %-I:%M %p")
 
 
+def _event_time(moment: datetime, tz: str) -> dict:
+    """A Google Calendar time in the business's timezone.
+
+    Google accepts an offset-bearing timestamp plus a timeZone. Sending the
+    business's zone rather than UTC keeps the same instant while making the
+    event self-describing to whoever opens it.
+    """
+    return {"dateTime": moment.astimezone(ZoneInfo(tz)).isoformat(), "timeZone": tz}
+
+
 # --------------------------------------------------------------------------- #
 # OAuth
 # --------------------------------------------------------------------------- #
@@ -591,8 +601,14 @@ def _event_body(
     return {
         "summary": title,
         "description": "\n".join(description_lines),
-        "start": {"dateTime": start.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
-        "end": {"dateTime": end.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
+        # Written in the business's own timezone rather than UTC. The instant is
+        # identical either way and Google renders in the viewer's timezone, so
+        # this is not a correctness fix; it is so that a receptionist opening the
+        # event sees their own local time in the details instead of a UTC stamp
+        # they have to convert, and so the event still means the right thing if
+        # the business's timezone is ever changed.
+        "start": _event_time(start, business.timezone),
+        "end": _event_time(end, business.timezone),
         # Reminders are handled over WhatsApp, so Google's own popups are off to
         # avoid the business getting two sets of notifications.
         "reminders": {"useDefault": False, "overrides": []},
@@ -649,8 +665,8 @@ async def update_event_time(
         return
     calendar_id = appointment.google_calendar_id or "primary"
     body = {
-        "start": {"dateTime": start.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
-        "end": {"dateTime": end.astimezone(timezone.utc).isoformat(), "timeZone": "UTC"},
+        "start": _event_time(start, business.timezone),
+        "end": _event_time(end, business.timezone),
     }
     await _api_request(
         db,

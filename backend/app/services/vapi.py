@@ -117,7 +117,22 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
         "serverMessages": ["end-of-call-report", "status-update", "tool-calls"],
         # Callers pause mid-sentence when reading out a phone number or checking
         # a calendar. A short endpointing window cuts them off.
-        "startSpeakingPlan": {"waitSeconds": 0.6},
+        # Measured on a real booking: the agent took 3.0s on average between the
+        # caller finishing and speaking, 15s of a 66s call. Part of that is
+        # simply this timer, and part is the model deciding.
+        #
+        # smartEndpointing uses a model to judge whether a sentence is actually
+        # finished, instead of waiting a fixed period after any silence. That is
+        # what lets the wait drop without cutting people off mid-sentence, which
+        # is the failure that matters: a caller who gets interrupted repeats
+        # themselves and the call gets longer, not shorter.
+        "startSpeakingPlan": {
+            "waitSeconds": 0.4,
+            "smartEndpointingEnabled": True,
+        },
+        # A caller who trails off or is interrupted by background noise should
+        # not have the agent talk over them.
+        "stopSpeakingPlan": {"numWords": 2, "voiceSeconds": 0.2, "backoffSeconds": 1.0},
         # Both of these are cost ceilings as much as UX settings. Every second of
         # a call is billed across four vendors at once (VAPI, telephony, STT,
         # TTS), so a caller who puts the phone down without hanging up, or a

@@ -14,9 +14,6 @@ about the industry: callers code-switch mid-sentence, so the agent is told to
 mirror the caller rather than pick a language up front.
 """
 
-from datetime import datetime
-from zoneinfo import ZoneInfo
-
 from app.db.models import Business, Language, StaffMember
 
 LANGUAGE_RULES = {
@@ -128,7 +125,6 @@ def _rules_block(business: Business) -> str:
 
 def build_system_prompt(business: Business, staff: list[StaffMember] | None = None) -> str:
     staff = staff or []
-    now_local = datetime.now(ZoneInfo(business.timezone))
     open_days = ", ".join(
         DAY_NAMES.get(day, str(day)) for day in sorted(business.working_days or [])
     )
@@ -151,7 +147,7 @@ calling on their behalf.
 - Address: {business.address or "not on file"}
 - Open: {open_days}, {business.opens_at.strftime("%-I:%M %p")} to {business.closes_at.strftime("%-I:%M %p")}
 - Contact number: {business.contact_phone or business.phone_number}
-- Current date and time: {now_local.strftime("%A, %d %B %Y, %-I:%M %p")} ({business.timezone})
+- Current date and time: {{{{"now" | date: "%A, %d %B %Y, %I:%M %p", "{business.timezone}"}}}} ({business.timezone})
 - Available {staff_plural}:
 {_staff_block(business, staff)}
 {notes_line}

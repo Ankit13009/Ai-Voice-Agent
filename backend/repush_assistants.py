@@ -41,21 +41,58 @@ def _system_prompt(payload: dict) -> str:
     return ""
 
 
-WATCHED = [
-    # The prompt first, because it is the thing that actually changes behaviour
-    # and the reason this script exists. Leaving it out made the script report
-    # "up to date" for three assistants running a prompt two versions old, which
-    # is precisely the silent divergence it was written to catch.
-    ("system prompt", lambda p: f"{len(_system_prompt(p))} chars"),
-    ("model", lambda p: (p.get("model") or {}).get("model")),
-    ("tools", lambda p: len((p.get("model") or {}).get("tools") or [])),
-    ("transcriber", lambda p: f"{(p.get('transcriber') or {}).get('model')} "
-                              f"{(p.get('transcriber') or {}).get('language')}"),
-    ("voice", lambda p: (p.get("voice") or {}).get("voiceId")),
-    ("maxDurationSeconds", lambda p: p.get("maxDurationSeconds")),
-    ("silenceTimeoutSeconds", lambda p: p.get("silenceTimeoutSeconds")),
-    ("firstMessage", lambda p: (p.get("firstMessage") or "")[:60]),
-]
+# Keys VAPI adds or rewrites on its own. Comparing them would report drift on
+# every run and train whoever reads this to ignore the output.
+IGNORED_KEYS = {
+    "id", "orgId", "createdAt", "updatedAt", "isServerUrlSecretSet",
+    "credentialIds", "keypadInputPlan", "compliancePlan", "artifactPlan",
+}
+
+
+def _summarise(value, depth: int = 0) -> str:
+    """A short, readable rendering of a value for the diff output."""
+    if isinstance(value, str) and len(value) > 60:
+        return f"<{len(value)} chars>"
+    if isinstance(value, list):
+        return f"[{len(value)} items]"
+    if isinstance(value, dict) and depth > 0:
+        return "{...}"
+    return repr(value)
+
+
+def _diff(wanted, live, path: str = "") -> list[tuple[str, str, str]]:
+    """Every field we send that differs from what VAPI holds.
+
+    Compares the whole payload rather than a hand-listed set of fields. A
+    curated list has now silently missed two changes in a row, the system prompt
+    and then the endpointing plan, each time reporting "up to date" for
+    assistants that were running old configuration. Only what we actually send
+    is compared, so VAPI's own defaults do not show up as drift.
+    """
+    out: list[tuple[str, str, str]] = []
+
+    if isinstance(wanted, dict):
+        if not isinstance(live, dict):
+            return [(path or "(root)", _summarise(live), _summarise(wanted))]
+        for key, want_value in wanted.items():
+            if key in IGNORED_KEYS:
+                continue
+            # VAPI never returns the webhook secret, so it always looks changed.
+            if path == "server" and key == "secret":
+                continue
+            out.extend(_diff(want_value, live.get(key), f"{path}.{key}" if path else key))
+        return out
+
+    if isinstance(wanted, list):
+        if not isinstance(live, list) or len(wanted) != len(live):
+            return [(path, _summarise(live), _summarise(wanted))]
+        for index, item in enumerate(wanted):
+            out.extend(_diff(item, live[index], f"{path}[{index}]"))
+        return out
+
+    if wanted != live:
+        return [(path, _summarise(live), _summarise(wanted))]
+    return out
 
 
 async def _live_assistant(assistant_id: str) -> dict | None:
@@ -125,19 +162,14 @@ async def run(apply: bool, only_slug: str | None) -> int:
                         print(f"  FAILED: {exc}")
                 continue
 
-            drift = [
-                (name, live_value, wanted_value)
-                for name, read in WATCHED
-                for live_value, wanted_value in [(read(live), read(wanted))]
-                if live_value != wanted_value
-            ]
+            drift = _diff(wanted, live)
 
             if not drift:
                 print("  up to date")
                 continue
 
             for name, live_value, wanted_value in drift:
-                print(f"  {name}: {live_value!r} -> {wanted_value!r}")
+                print(f"  {name}: {live_value} -> {wanted_value}")
 
             if apply:
                 try:
