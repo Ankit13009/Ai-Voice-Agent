@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 import { Shell } from "@/components/layout/Shell";
 import { useAuth } from "@/lib/auth";
+import { tokenStore } from "@/lib/api/client";
 import { LabelProvider } from "@/lib/labels";
 import { PageLoading } from "@/components/ui";
 
@@ -23,6 +24,10 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (loading) return;
     if (!user) {
+      // A token in storage means a session is being established: the user object
+      // simply has not propagated through context yet. Bouncing to /login here
+      // is a race that sends a freshly signed-in user straight back to the form.
+      if (tokenStore.access) return;
       router.replace("/login");
     } else if (user.role === "superadmin") {
       // A superadmin has no tenant, so these pages would 403 on every request.
