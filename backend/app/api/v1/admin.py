@@ -9,18 +9,21 @@ it lives in its own module rather than being a flag on the tenant endpoints.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter
-from sqlalchemy import func, select
+from fastapi import APIRouter, Request
+from sqlalchemy import func, select, update
 
 from app.config import get_settings
-from app.core.deps import DbSession, RequireSuperadmin
+from app.core.deps import DbSession, RequireSuperadmin, write_audit_log
+from app.core.errors import NotFoundError
 from app.core.response import ok
+from app.core.security import generate_temporary_password, hash_password
 from app.db.models import (
     Appointment,
     AppointmentStatus,
     Business,
     CalendarCredential,
     Call,
+    RefreshToken,
     User,
 )
 
@@ -154,4 +157,95 @@ async def platform_stats(db: DbSession, _admin: RequireSuperadmin) -> dict:
             "appointments_total": appointments,
             "call_cost_paise": cost,
         }
+    )
+
+
+@router.get("/businesses/{business_id}/users", summary="Users of one tenant")
+async def list_business_users(
+    business_id: str, db: DbSession, _admin: RequireSuperadmin
+) -> dict:
+    """Who can sign in to a given tenant.
+
+    Needed before a reset: the operator taking the phone call knows the clinic's
+    name, not the user id of whoever is locked out.
+    """
+    business = (
+        await db.execute(select(Business).where(Business.id == business_id))
+    ).scalar_one_or_none()
+    if business is None:
+        raise NotFoundError("Business")
+
+    users = (
+        await db.execute(
+            select(User).where(User.business_id == business_id).order_by(User.created_at)
+        )
+    ).scalars().all()
+
+    return ok(
+        {
+            "business": {"id": business.id, "name": business.name, "slug": business.slug},
+            "users": [
+                {
+                    "id": u.id,
+                    "email": u.email,
+                    "full_name": u.full_name,
+                    "role": u.role,
+                    "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+                    "must_change_password": u.must_change_password,
+                    "is_locked": bool(u.locked_until and u.locked_until > datetime.now(timezone.utc)),
+                }
+                for u in users
+            ],
+        }
+    )
+
+
+@router.post("/users/{user_id}/reset-password", summary="Reset any user's password")
+async def admin_reset_password(
+    user_id: str, db: DbSession, request: Request, admin: RequireSuperadmin
+) -> dict:
+    """The operator's escalation path when an owner is locked out of their own tenant.
+
+    An owner can already reset anyone in their business, but only while they can
+    still sign in. With no email service there is no self-serve recovery, so an
+    owner who forgets their password has no route back in and the only remedy
+    was editing the database by hand.
+
+    Unlike the owner-facing reset this deliberately crosses tenant boundaries,
+    which is why it is superadmin-only and writes an audit entry naming the
+    admin who did it.
+    """
+    user = (await db.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if user is None:
+        raise NotFoundError("User")
+
+    temporary = generate_temporary_password()
+    user.password_hash = hash_password(temporary)
+    user.must_change_password = True
+    user.failed_login_attempts = 0
+    user.locked_until = None
+
+    # A reset that leaves old sessions alive is not a reset: whoever holds a
+    # stolen refresh token keeps the account.
+    revoked = await db.execute(
+        update(RefreshToken)
+        .where(RefreshToken.user_id == user.id, RefreshToken.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(timezone.utc))
+    )
+
+    await write_audit_log(
+        db,
+        request,
+        action="user.password_reset_by_admin",
+        business_id=user.business_id,
+        resource_type="user",
+        resource_id=user.id,
+        metadata={"by": admin.email, "sessions_revoked": revoked.rowcount or 0},
+    )
+    await db.commit()
+
+    logger.info("Superadmin %s reset the password for user %s", admin.email, user.id)
+    return ok(
+        {"id": user.id, "email": user.email, "temporary_password": temporary},
+        message="Password reset. Give them this password; it cannot be shown again.",
     )
