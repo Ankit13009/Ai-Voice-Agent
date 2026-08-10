@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str = Field(default="", description="Verifies X-Hub-Signature-256.")
     whatsapp_verify_token: str = Field(default="", description="Echoed during webhook setup.")
 
+    # --- Error reporting (optional) ---
+    # Render's free tier keeps no log history, so an exception at 3pm is gone by
+    # the time a client reports it at 5pm. Unset means simply off.
+    sentry_dsn: str = Field(default="", description="Leave empty to disable error reporting.")
+
     # --- Scheduling ---
     default_timezone: str = Field(default="Asia/Kolkata")
     reminder_scheduler_enabled: bool = Field(default=True)

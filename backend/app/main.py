@@ -13,7 +13,7 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
@@ -35,6 +35,28 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
 )
 logger = logging.getLogger("business-receptionist")
+
+# Error reporting is optional and off unless a DSN is configured, so the app
+# runs unchanged for anyone without a Sentry account. It matters in production
+# because the free hosting tier keeps no log history: an exception during a call
+# is unrecoverable an hour later, which is usually when someone reports it.
+if settings.sentry_dsn:
+    try:
+        import sentry_sdk
+
+        sentry_sdk.init(
+            dsn=settings.sentry_dsn,
+            environment=settings.app_env,
+            # Errors only. Performance traces on a free tier burn the quota that
+            # the actual exceptions need.
+            traces_sample_rate=0.0,
+            # Transcripts, phone numbers and names pass through this app, and
+            # none of it belongs in a third-party error tracker.
+            send_default_pii=False,
+        )
+        logger.info("Error reporting enabled.")
+    except Exception:  # noqa: BLE001
+        logger.exception("Could not start error reporting; continuing without it.")
 
 # Brute-force protection on the endpoints worth attacking: {prefix: (max, seconds)}
 RATE_LIMIT_RULES = {
@@ -118,6 +140,55 @@ app.include_router(api_router)
 # not to our envelope, and they authenticate by signature rather than JWT.
 app.include_router(vapi_webhooks.router)
 app.include_router(whatsapp_webhooks.router)
+
+
+@app.get("/health/ready", tags=["system"], summary="Readiness probe")
+async def readiness() -> dict:
+    """Whether this instance can actually serve a call, not merely that it is running.
+
+    Kept separate from /health on purpose. Render uses /health to decide whether
+    a deploy succeeded, so making that one depend on the database would turn a
+    brief database blip into a failed deploy and a rollback. This endpoint is
+    for an external uptime monitor, which wants the opposite: the truth about
+    whether a real caller would be served right now.
+
+    Returns 503 when the database is unreachable, because a monitor that only
+    reads the body will otherwise treat a broken system as healthy.
+    """
+    from sqlalchemy import select, text as sql_text
+
+    from app.db.models import Business
+    from app.db.session import SessionLocal
+
+    checks: dict[str, object] = {}
+    healthy = True
+
+    try:
+        async with SessionLocal() as db:
+            await db.execute(sql_text("SELECT 1"))
+            # Counting businesses proves the schema is present too, not just
+            # that a connection opened: a database restored without migrations
+            # answers SELECT 1 perfectly well and then fails every real query.
+            total = len((await db.execute(select(Business.id))).scalars().all())
+            checks["database"] = {"ok": True, "businesses": total}
+    except Exception as exc:  # noqa: BLE001
+        healthy = False
+        logger.exception("Readiness check failed on the database.")
+        checks["database"] = {"ok": False, "error": type(exc).__name__}
+
+    # Configuration gaps are reported but not fatal: a deployment with no
+    # WhatsApp account still answers calls, and paging someone at night for it
+    # would train them to ignore the alert that matters.
+    checks["config"] = {
+        "vapi": bool(settings.vapi_api_key),
+        "google_oauth": bool(settings.google_client_id),
+        "whatsapp": bool(settings.whatsapp_access_token),
+    }
+
+    if not healthy:
+        raise HTTPException(status_code=503, detail={"status": "degraded", "checks": checks})
+
+    return ok({"status": "ready", "checks": checks})
 
 
 @app.get("/health", tags=["system"], summary="Liveness probe")
