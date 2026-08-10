@@ -33,9 +33,7 @@ CHECK_AVAILABILITY = {
     "function": {
         "name": "check_availability",
         "description": (
-            "Find real open appointment slots. Always call this before offering "
-            "any time to the caller. Returns only slots that are genuinely free "
-            "on the business's calendar."
+            "Real open slots. Call before offering any time. Never invent times."
         ),
         "parameters": {
             "type": "object",
@@ -43,10 +41,7 @@ CHECK_AVAILABILITY = {
                 "date": {
                     "type": "string",
                     "description": (
-                        "The day the caller asked about, as YYYY-MM-DD in the business's "
-                        "local date. Work it out from the current date given in your "
-                        "instructions (for example 'kal' or 'tomorrow'). Leave empty to "
-                        "search from now onwards."
+                        "YYYY-MM-DD in the business local date, worked out from the current date in your instructions. Empty = search from now."
                     ),
                 },
                 "preferred_time_of_day": {
@@ -57,8 +52,7 @@ CHECK_AVAILABILITY = {
                 "staff_member_id": {
                     "type": "string",
                     "description": (
-                        "The id of the {staff_singular} the caller asked for, taken from the "
-                        "list in your instructions. Leave empty if they did not name one."
+                        "{staff_singular} id from your instructions. Empty if none named."
                     ),
                 },
             },
@@ -72,10 +66,7 @@ BOOK_APPOINTMENT = {
     "function": {
         "name": "book_appointment",
         "description": (
-            "Book an appointment at a slot that check_availability already "
-            "returned. Call this only once the caller has chosen a specific time "
-            "and you have their name and phone number. Do not tell the caller it "
-            "is booked until this returns success."
+            "Book a slot check_availability returned. Requires a chosen time and a name. Do not say it is booked until this succeeds."
         ),
         "parameters": {
             "type": "object",
@@ -84,22 +75,18 @@ BOOK_APPOINTMENT = {
                 "customer_phone": {
                     "type": "string",
                     "description": (
-                        "Callback number in international format, e.g. +919876543210. "
-                        "If the caller says to use the number they are calling from, "
-                        "pass an empty string and the business's system will use it."
+                        "International format, e.g. +919876543210. Empty = use the number they are calling from."
                     ),
                 },
                 "starts_at": {
                     "type": "string",
                     "description": (
-                        "The chosen slot's exact start time, copied verbatim from the "
-                        "'starts_at' value that check_availability returned. Do not "
-                        "reformat it or compute it yourself."
+                        "Copy verbatim from check_availability starts_at. Never reformat or compute it."
                     ),
                 },
                 "reason": {
                     "type": "string",
-                    "description": "A short reason for the visit, e.g. 'fever and cough', 'follow-up'.",
+                    "description": "Short reason, e.g. fever and cough, follow-up.",
                 },
                 "staff_member_id": {"type": "string", "description": "The {staff_singular} id, if one was chosen."},
             },
@@ -113,9 +100,7 @@ FIND_APPOINTMENT = {
     "function": {
         "name": "find_appointment",
         "description": (
-            "Look up the caller's existing upcoming appointment, matched on the "
-            "number they are calling from. Call this first for any reschedule or "
-            "cancellation request."
+            "Find the caller existing appointment. Call first for any reschedule or cancellation."
         ),
         "parameters": {
             "type": "object",
@@ -123,8 +108,7 @@ FIND_APPOINTMENT = {
                 "customer_phone": {
                     "type": "string",
                     "description": (
-                        "Only if the caller says the booking is under a different "
-                        "number. Otherwise leave empty to use the calling number."
+                        "Only if booked under a different number. Empty = calling number."
                     ),
                 }
             },
@@ -138,8 +122,7 @@ RESCHEDULE_APPOINTMENT = {
     "function": {
         "name": "reschedule_appointment",
         "description": (
-            "Move the caller's existing appointment to a new slot that "
-            "check_availability returned. Call find_appointment first."
+            "Move an appointment to a slot check_availability returned. Call find_appointment first."
         ),
         "parameters": {
             "type": "object",
@@ -151,8 +134,7 @@ RESCHEDULE_APPOINTMENT = {
                 "starts_at": {
                     "type": "string",
                     "description": (
-                        "The new slot's start time, copied verbatim from "
-                        "check_availability's 'starts_at'."
+                        "Copy verbatim from check_availability starts_at."
                     ),
                 },
                 "reason": {"type": "string", "description": "Why they are moving it, if given."},
@@ -167,8 +149,7 @@ CANCEL_APPOINTMENT = {
     "function": {
         "name": "cancel_appointment",
         "description": (
-            "Cancel the caller's existing appointment. Call find_appointment "
-            "first and confirm with the caller before calling this."
+            "Cancel an appointment. Call find_appointment first and confirm with the caller."
         ),
         "parameters": {
             "type": "object",
@@ -189,9 +170,7 @@ LOOKUP_CALLER = {
     "function": {
         "name": "lookup_caller",
         "description": (
-            "Look up who is calling, from the number they are calling from. Call "
-            "this ONCE, immediately after your greeting, before asking anything. "
-            "If it returns a name, use it and do not ask for their name again."
+            "Who is calling. Call ONCE right after your greeting, before asking anything. If it returns a name, use it and never ask for their name."
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
@@ -202,9 +181,7 @@ JOIN_WAITLIST = {
     "function": {
         "name": "join_waitlist",
         "description": (
-            "Put the caller on the waiting list when nothing suitable is free. "
-            "Offer this instead of ending the call empty-handed: they will be "
-            "messaged if a slot opens in the window they wanted."
+            "Waiting list when nothing suitable is free. Offer instead of ending empty-handed."
         ),
         "parameters": {
             "type": "object",
@@ -212,11 +189,11 @@ JOIN_WAITLIST = {
                 "customer_name": {"type": "string", "description": "The {customer_singular}'s name."},
                 "date_from": {
                     "type": "string",
-                    "description": "Earliest date they would accept, YYYY-MM-DD in the business's local date.",
+                    "description": "Earliest acceptable date, YYYY-MM-DD.",
                 },
                 "date_to": {
                     "type": "string",
-                    "description": "Latest date they would accept, YYYY-MM-DD. Use the same day as date_from if they only want one day.",
+                    "description": "Latest acceptable date, YYYY-MM-DD. Same as date_from for a single day.",
                 },
                 "reason": {"type": "string", "description": "Short reason for the visit."},
             },
