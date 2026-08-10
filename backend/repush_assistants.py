@@ -34,7 +34,19 @@ from app.services import vapi
 
 # Fields worth showing a diff for. The full payload is large and mostly stable,
 # and printing all of it hides the one line that actually changed.
+def _system_prompt(payload: dict) -> str:
+    for message in ((payload.get("model") or {}).get("messages") or []):
+        if message.get("role") == "system":
+            return message.get("content") or ""
+    return ""
+
+
 WATCHED = [
+    # The prompt first, because it is the thing that actually changes behaviour
+    # and the reason this script exists. Leaving it out made the script report
+    # "up to date" for three assistants running a prompt two versions old, which
+    # is precisely the silent divergence it was written to catch.
+    ("system prompt", lambda p: f"{len(_system_prompt(p))} chars"),
     ("model", lambda p: (p.get("model") or {}).get("model")),
     ("tools", lambda p: len((p.get("model") or {}).get("tools") or [])),
     ("transcriber", lambda p: f"{(p.get('transcriber') or {}).get('model')} "
