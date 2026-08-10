@@ -9,6 +9,8 @@
 import { api, requestWithMessage, tokenStore } from "./client";
 import type {
   AdminBusinessRow,
+  AdminTenantUsers,
+  IssuedPassword,
   Appointment,
   AppointmentCancelRequest,
   AppointmentCreateRequest,
@@ -171,6 +173,17 @@ export const adminApi = {
     api.get<AdminBusinessRow[]>(`${V1}/admin/businesses`, undefined, signal),
   stats: (signal?: AbortSignal) =>
     api.get<PlatformStats>(`${V1}/admin/stats`, undefined, signal),
+
+  // Operator escalation: an owner locked out of their own tenant has no
+  // self-serve route back in, because there is no email service to send one.
+  listTenantUsers: (businessId: string, signal?: AbortSignal) =>
+    api.get<AdminTenantUsers>(
+      `${V1}/admin/businesses/${businessId}/users`,
+      undefined,
+      signal,
+    ),
+  resetUserPassword: (userId: string) =>
+    api.post<IssuedPassword>(`${V1}/admin/users/${userId}/reset-password`),
 };
 
 export const onboardingApi = {

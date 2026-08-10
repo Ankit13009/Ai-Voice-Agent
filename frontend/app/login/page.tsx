@@ -6,7 +6,23 @@ import type { FormEvent } from "react";
 
 import { ApiError } from "@/lib/api/client";
 import { useAuth } from "@/lib/auth";
-import { Alert, Button, Card, Field, Input } from "@/components/ui";
+import { Alert, Button, Field, Input } from "@/components/ui";
+
+/** What the agent actually does, in the order a client asks about it. */
+const CAPABILITIES = [
+  {
+    title: "Answers in Hindi and English",
+    detail: "Switches mid-sentence, the way callers actually speak.",
+  },
+  {
+    title: "Books straight into the calendar",
+    detail: "Checks real availability first, so nothing is double booked.",
+  },
+  {
+    title: "Confirms and reminds on WhatsApp",
+    detail: "At booking, a day before, and two hours before.",
+  },
+];
 
 export default function LoginPage() {
   const router = useRouter();
@@ -48,16 +64,74 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="min-h-screen flex items-center justify-center p-4 bg-canvas">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-6">
-          <h1 className="text-xl font-semibold text-ink">Business Receptionist</h1>
-          <p className="text-sm text-ink-muted mt-1">
-            Sign in to manage calls and appointments.
+    <main className="min-h-screen grid lg:grid-cols-2 bg-canvas">
+      {/* Left: what the product does. Hidden below lg, where the form is the
+          only thing worth the vertical space on a phone. */}
+      <section className="hidden lg:flex flex-col justify-between p-12 xl:p-16 bg-primary text-ink-inverse relative overflow-hidden">
+        {/* Depth without imagery: two soft radial washes over the brand colour.
+            Decorative stock photography would say nothing true about a phone
+            agent, so the panel carries the product's actual claims instead. */}
+        <div
+          aria-hidden
+          className="absolute inset-0 opacity-[0.18] pointer-events-none"
+          style={{
+            backgroundImage:
+              "radial-gradient(60rem 40rem at 15% 5%, white, transparent 60%), radial-gradient(45rem 35rem at 95% 95%, white, transparent 55%)",
+          }}
+        />
+
+        <div className="relative">
+          <p className="text-sm font-semibold tracking-wide uppercase opacity-80">
+            Business Receptionist
           </p>
         </div>
 
-        <Card className="p-6">
+        <div className="relative max-w-md">
+          <h2 className="text-3xl xl:text-4xl font-semibold leading-tight">
+            Your phone, answered every time.
+          </h2>
+          <p className="mt-4 text-base leading-relaxed opacity-90">
+            An AI receptionist that picks up on the first ring, books the
+            appointment, and never puts a caller on hold.
+          </p>
+
+          <ul className="mt-10 flex flex-col gap-5">
+            {CAPABILITIES.map((item) => (
+              <li key={item.title} className="flex gap-3">
+                <span
+                  aria-hidden
+                  className="mt-[7px] h-1.5 w-1.5 rounded-full bg-white/70 shrink-0"
+                />
+                <div>
+                  <p className="text-sm font-medium">{item.title}</p>
+                  <p className="text-sm opacity-75 mt-0.5">{item.detail}</p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="relative text-xs opacity-70">
+          Calls are recorded and transcribed for the business that receives them.
+        </p>
+      </section>
+
+      {/* Right: the form. */}
+      <section className="flex items-center justify-center p-6 sm:p-10">
+        <div className="w-full max-w-sm">
+          <div className="mb-8">
+            {/* The left panel carries the product name on desktop, but it is
+                hidden below lg, which would otherwise leave a bare form with
+                nothing identifying what it signs you into. */}
+            <p className="lg:hidden text-xs font-semibold tracking-wide uppercase text-primary mb-3">
+              Business Receptionist
+            </p>
+            <h1 className="text-2xl font-semibold text-ink">Sign in</h1>
+            <p className="text-sm text-ink-muted mt-1.5">
+              Manage your calls, appointments and reminders.
+            </p>
+          </div>
+
           <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
             {formError && <Alert tone="danger">{formError}</Alert>}
 
@@ -90,16 +164,19 @@ export default function LoginPage() {
               size="lg"
               fullWidth
               loading={submitting}
+              className="mt-2"
             >
               Sign in
             </Button>
           </form>
-        </Card>
 
-        <p className="text-center text-xs text-ink-subtle mt-4">
-          Trouble signing in? Contact your business administrator.
-        </p>
-      </div>
+          {/* No self-serve reset exists: there is no email service to deliver
+              one, so the honest instruction is to ask a human. */}
+          <p className="text-xs text-ink-subtle mt-6">
+            Forgot your password? Your business administrator can issue a new one.
+          </p>
+        </div>
+      </section>
     </main>
   );
 }

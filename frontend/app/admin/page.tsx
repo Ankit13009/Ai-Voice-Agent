@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { adminApi } from "@/lib/api/endpoints";
 import { useApiQuery } from "@/lib/useApi";
 import { formatDate, formatPaise, formatPhone } from "@/lib/format";
 import type { AdminBusinessRow } from "@/types/api";
+import { TenantUsersModal } from "@/components/admin/TenantUsersModal";
 import {
   Alert,
   Badge,
@@ -25,6 +26,7 @@ import {
 export default function AdminClientsPage() {
   const businesses = useApiQuery((signal) => adminApi.listBusinesses(signal), []);
   const stats = useApiQuery((signal) => adminApi.stats(signal), []);
+  const [usersFor, setUsersFor] = useState<AdminBusinessRow | null>(null);
 
   const columns = useMemo<Array<Column<AdminBusinessRow>>>(
     () => [
@@ -106,6 +108,16 @@ export default function AdminClientsPage() {
           <span className="text-sm text-ink-subtle tnum">{formatDate(row.created_at)}</span>
         ),
       },
+      {
+        key: "actions",
+        header: "",
+        align: "right",
+        render: (row) => (
+          <Button size="sm" variant="ghost" onClick={() => setUsersFor(row)}>
+            Users
+          </Button>
+        ),
+      },
     ],
     [],
   );
@@ -172,6 +184,12 @@ export default function AdminClientsPage() {
           }
         />
       </Card>
+
+      <TenantUsersModal
+        businessId={usersFor?.id ?? null}
+        businessName={usersFor?.name ?? ""}
+        onClose={() => setUsersFor(null)}
+      />
     </>
   );
 }

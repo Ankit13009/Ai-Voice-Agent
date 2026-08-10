@@ -484,6 +484,28 @@ export interface OutboundTestCallResult {
   status: string;
 }
 
+export interface AdminTenantUser {
+  id: string;
+  email: string;
+  full_name: string;
+  role: string;
+  last_login_at: string | null;
+  must_change_password: boolean;
+  is_locked: boolean;
+}
+
+export interface AdminTenantUsers {
+  business: { id: string; name: string; slug: string };
+  users: AdminTenantUser[];
+}
+
+/** A one-time password. The server will never return it again. */
+export interface IssuedPassword {
+  id: string;
+  email: string;
+  temporary_password: string;
+}
+
 export interface GoogleCalendarStatus {
   connected: boolean;
   email: string;
