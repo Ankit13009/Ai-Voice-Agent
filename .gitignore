@@ -29,3 +29,7 @@ backend/alembic/__pycache__/
 
 # Generated production env, contains secrets
 backend/render-env.txt
+
+# Local database backups: they contain patient names, phone numbers and
+# transcripts, and this repository is public.
+backend/backups/

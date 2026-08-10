@@ -440,6 +440,7 @@ function RemindersCard({ business, onSaved }: { business: Business; onSaved: () 
   const [enabled, setEnabled] = useState(business.whatsapp_enabled);
   const [reminder24, setReminder24] = useState(business.reminder_24h_enabled);
   const [reminder2, setReminder2] = useState(business.reminder_2h_enabled);
+  const configured = business.integrations?.whatsapp_configured ?? false;
 
   const save = useMutation(async () => {
     try {
@@ -461,6 +462,21 @@ function RemindersCard({ business, onSaved }: { business: Business; onSaved: () 
         title="WhatsApp reminders"
         description="Each message is a Meta utility template, charged per send."
       />
+
+      {/* Without server credentials these switches describe an intention, not a
+          behaviour: messages are queued and never sent, and nothing else in the
+          product says so. Saying it here stops a business believing its
+          customers were reminded when they were not. */}
+      {!configured && (
+        <CardBody className="pb-0">
+          <Alert tone="warning" title="WhatsApp is not connected yet">
+            These settings are saved, but no messages can be sent until the
+            WhatsApp account is set up. Confirmations and reminders will wait in
+            the queue until then.
+          </Alert>
+        </CardBody>
+      )}
+
       <CardBody className="flex flex-col divide-y divide-line">
         <Switch
           checked={enabled}
