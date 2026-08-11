@@ -240,8 +240,8 @@ class Business(Base, TimestampMixin):
     # platform token is used, which is the normal case: a salon owner should not
     # have to complete Meta business verification to get reminders working.
     # Fernet-encrypted, and never returned by any endpoint.
-    whatsapp_encrypted_access_token: Mapped[str] = mapped_column(Text, default="")
-    whatsapp_display_number: Mapped[str] = mapped_column(String(32), default="")
+    whatsapp_encrypted_access_token: Mapped[str] = mapped_column(Text, default="", server_default="")
+    whatsapp_display_number: Mapped[str] = mapped_column(String(32), default="", server_default="")
     reminder_24h_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     reminder_2h_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 

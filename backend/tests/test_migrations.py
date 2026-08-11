@@ -102,3 +102,43 @@ def test_server_defaults_are_dialect_portable(column: sa.Column) -> None:
         assert literal not in ("true", "false"), (
             f"{column.table.name}.{column.name} is numeric but defaults to {literal!r}."
         )
+
+
+def test_added_columns_are_safe_against_a_table_with_rows() -> None:
+    """A NOT NULL column added without a server default cannot be applied.
+
+    Postgres has to put something in that column for every existing row, and
+    with no default there is nothing to put, so the migration aborts. It applies
+    perfectly well to an empty database, which is exactly what the other test
+    above uses, so this failure reaches production untouched by the suite: it
+    already did once, taking down a deploy while every test passed.
+
+    Static check over the migration files rather than a runtime one, because
+    reproducing it needs a database that already holds data at the right point
+    in the history.
+    """
+    import re
+
+    offenders: list[str] = []
+    pattern = re.compile(r"op\.add_column\(\s*(['\"])(?P<table>[^'\"]+)\1\s*,\s*(?P<col>sa\.Column\(.*)")
+
+    for revision in sorted((BACKEND_ROOT / "alembic" / "versions").glob("*.py")):
+        source = revision.read_text()
+        for match in pattern.finditer(source):
+            # The column definition runs to the end of the add_column call; the
+            # regex stops at the line end, which is how alembic autogenerates it.
+            column = match.group("col")
+            if "nullable=False" not in column:
+                continue
+            if "server_default" in column:
+                continue
+            name = re.search(r"['\"]([^'\"]+)['\"]", column)
+            offenders.append(
+                f"{revision.name}: {match.group('table')}."
+                f"{name.group(1) if name else '?'}"
+            )
+
+    assert not offenders, (
+        "These columns are NOT NULL with no server_default, so adding them to a "
+        "table that already has rows will fail:\n  " + "\n  ".join(offenders)
+    )
