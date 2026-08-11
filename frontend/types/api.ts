@@ -484,6 +484,13 @@ export interface OutboundTestCallResult {
   status: string;
 }
 
+export interface WhatsAppSenderStatus {
+  using_own_number: boolean;
+  phone_number_id: string;
+  display_number: string;
+  has_access_token: boolean;
+}
+
 export interface PlatformSettingStatus {
   set: boolean;
   source: "dashboard" | "environment" | "none";

@@ -30,6 +30,7 @@ import {
 import type { StaffMember } from "@/types/api";
 import { TestCall } from "@/components/TestCall";
 import { UsersCard } from "@/components/settings/UsersCard";
+import { WhatsAppSenderCard } from "@/components/settings/WhatsAppSenderCard";
 import {
   SettingsNav,
   type SettingsSection,
@@ -146,7 +147,10 @@ export default function SettingsPage() {
             </>
           )}
           {section === "whatsapp" && (
-            <RemindersCard business={business.data} onSaved={business.refetch} />
+            <>
+              <WhatsAppSenderCard />
+              <RemindersCard business={business.data} onSaved={business.refetch} />
+            </>
           )}
           {section === "users" && <UsersCard />}
           {section === "data" && (

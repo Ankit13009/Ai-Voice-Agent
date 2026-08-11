@@ -14,6 +14,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
+import httpx
 import jwt
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import RedirectResponse
@@ -29,6 +30,7 @@ from app.core.deps import (
 )
 from app.core.errors import BadRequestError, IntegrationNotConfiguredError, NotFoundError
 from app.core.response import ok
+from app.core.security import decrypt_secret, encrypt_secret
 from app.db.models import CalendarCredential, Business
 from app.services import google_calendar as gcal
 
@@ -293,4 +295,119 @@ async def connect_service_account(
     return ok(
         {"connected": True, "calendar_id": credential.calendar_id},
         message="Calendar connected. No sign-in needed and this will not expire.",
+    )
+
+
+class WhatsAppSenderRequest(BaseModel):
+    """A business connecting its own WhatsApp sender.
+
+    Both optional so an owner can correct one field without re-pasting a token
+    they cannot read back. An empty access token clears it and returns the
+    business to the platform's shared sender.
+    """
+
+    phone_number_id: str | None = Field(default=None, max_length=64)
+    access_token: str | None = Field(default=None, max_length=1000)
+    display_number: str | None = Field(default=None, max_length=32)
+
+
+@router.get("/whatsapp", summary="This business's WhatsApp sender")
+async def whatsapp_sender_status(
+    business_id: ActiveBusiness, db: DbSession, _owner: RequireOwner
+) -> dict:
+    """Which number this business's messages are sent from.
+
+    Never returns the token. An owner needs to know whether their own sender is
+    in use and which number patients will see, not the credential itself.
+    """
+    business = (
+        await db.execute(select(Business).where(Business.id == business_id))
+    ).scalar_one()
+
+    own = bool(business.whatsapp_encrypted_access_token and business.whatsapp_phone_number_id)
+    return ok(
+        {
+            "using_own_number": own,
+            "phone_number_id": business.whatsapp_phone_number_id,
+            "display_number": business.whatsapp_display_number,
+            "has_access_token": bool(business.whatsapp_encrypted_access_token),
+        }
+    )
+
+
+@router.put("/whatsapp", summary="Send WhatsApp from this business's own number")
+async def connect_whatsapp_sender(
+    payload: WhatsAppSenderRequest,
+    business_id: ActiveBusiness,
+    db: DbSession,
+    request: Request,
+    _owner: RequireOwner,
+) -> dict:
+    """Point this business's messages at its own WhatsApp number.
+
+    Verified against Meta before saving, because a wrong number id or a token
+    scoped to a different account looks identical in the form and then fails on
+    the first appointment, silently, hours later.
+
+    Scoped to the caller's own business by ActiveBusiness: one client must never
+    be able to redirect another client's messages through their number.
+    """
+    business = (
+        await db.execute(select(Business).where(Business.id == business_id))
+    ).scalar_one()
+
+    updates = payload.model_dump(exclude_unset=True)
+
+    if "access_token" in updates:
+        token = (updates["access_token"] or "").strip()
+        business.whatsapp_encrypted_access_token = encrypt_secret(token) if token else ""
+    if "phone_number_id" in updates:
+        business.whatsapp_phone_number_id = (updates["phone_number_id"] or "").strip()
+    if "display_number" in updates:
+        business.whatsapp_display_number = (updates["display_number"] or "").strip()
+
+    await db.flush()
+
+    # Nothing to verify if they have handed back control to the platform sender.
+    token = decrypt_secret(business.whatsapp_encrypted_access_token or "")
+    if token and business.whatsapp_phone_number_id:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(
+                f"https://graph.facebook.com/v21.0/{business.whatsapp_phone_number_id}",
+                params={"fields": "display_phone_number,verified_name"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if response.status_code != 200:
+            detail = (response.json().get("error", {}) or {}).get(
+                "message", "Meta rejected these details."
+            )
+            await db.rollback()
+            raise BadRequestError(
+                f"Could not connect that WhatsApp number: {detail}"
+            )
+        # Store what Meta reports rather than what was typed, so the dashboard
+        # shows the number patients will actually see.
+        business.whatsapp_display_number = response.json().get("display_phone_number", "")
+
+    await write_audit_log(
+        db,
+        request,
+        action="integration.whatsapp_sender_updated",
+        business_id=business_id,
+        resource_type="business",
+        resource_id=business.id,
+        metadata={"fields": sorted(updates), "using_own_number": bool(token)},
+    )
+    await db.commit()
+
+    return ok(
+        {
+            "using_own_number": bool(token and business.whatsapp_phone_number_id),
+            "display_number": business.whatsapp_display_number,
+        },
+        message=(
+            "Messages will now be sent from your own WhatsApp number."
+            if token
+            else "Using the platform's shared WhatsApp number."
+        ),
     )

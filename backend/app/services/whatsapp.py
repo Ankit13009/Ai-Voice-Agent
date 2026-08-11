@@ -300,7 +300,15 @@ async def _credentials_for(business: Business) -> tuple[str, str]:
     rather than from the platform; otherwise the shared platform number is
     used. The token is always platform-level: one Meta app owns every number.
     """
+    from app.core.security import decrypt_secret
     from app.services import platform_config
+
+    # A business that brought its own Meta account uses it end to end: its own
+    # number and its own token. Mixing the platform token with a client's number
+    # cannot work anyway, since a token only reaches numbers on its own account.
+    own_token = decrypt_secret(business.whatsapp_encrypted_access_token or "")
+    if own_token and business.whatsapp_phone_number_id:
+        return business.whatsapp_phone_number_id, own_token
 
     phone_number_id = business.whatsapp_phone_number_id or await platform_config.get_value(
         "whatsapp_phone_number_id"

@@ -230,7 +230,18 @@ class Business(Base, TimestampMixin):
     # --- WhatsApp ---
     whatsapp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     # Per-business override; falls back to the platform-wide number when empty.
+    # A business can send from its own WhatsApp number instead of the
+    # platform's, so patients see their clinic rather than us. This is usually a
+    # different number from the one people call: the phone line and the WhatsApp
+    # number are separate things, and a number registered on the WhatsApp API
+    # cannot be used in the normal WhatsApp app.
     whatsapp_phone_number_id: Mapped[str] = mapped_column(String(64), default="")
+    # Only set when the business brought its own Meta account. Empty means the
+    # platform token is used, which is the normal case: a salon owner should not
+    # have to complete Meta business verification to get reminders working.
+    # Fernet-encrypted, and never returned by any endpoint.
+    whatsapp_encrypted_access_token: Mapped[str] = mapped_column(Text, default="")
+    whatsapp_display_number: Mapped[str] = mapped_column(String(32), default="")
     reminder_24h_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     reminder_2h_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
 

@@ -12,6 +12,7 @@ import type {
   AdminTenantUsers,
   IssuedPassword,
   WhatsAppConfigStatus,
+  WhatsAppSenderStatus,
   WhatsAppTestResult,
   Appointment,
   AppointmentCancelRequest,
@@ -168,6 +169,16 @@ export const integrationApi = {
   googleAuthorize: () =>
     api.get<GoogleAuthorizeResponse>(`${V1}/integrations/google/authorize`),
   googleDisconnect: () => api.delete<null>(`${V1}/integrations/google`),
+
+  whatsappSender: (signal?: AbortSignal) =>
+    api.get<WhatsAppSenderStatus>(`${V1}/integrations/whatsapp`, undefined, signal),
+  saveWhatsappSender: (payload: {
+    phone_number_id?: string;
+    access_token?: string;
+  }) => api.put<{ using_own_number: boolean; display_number: string }>(
+    `${V1}/integrations/whatsapp`,
+    payload,
+  ),
 };
 
 export const adminApi = {
