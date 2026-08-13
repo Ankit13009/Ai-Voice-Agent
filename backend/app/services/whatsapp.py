@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 import httpx
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -331,10 +332,20 @@ async def queue_message(
     kind: MessageKind,
     scheduled_for: datetime | None,
 ) -> WhatsAppMessage | None:
-    """Create a pending message row. Sending happens later, via the scheduler.
+    """Queue a message for this appointment, or re-point the one already queued.
 
     Returns None when the business has this message kind switched off, so callers
     can treat "disabled" and "queued" uniformly.
+
+    There is at most one row per (appointment, kind) — the unique constraint says
+    so, and that constraint is what makes the scheduler idempotent. So this is an
+    upsert rather than an insert: rescheduling an appointment has to re-point its
+    reminders at the new time, and inserting a second row would hit the constraint
+    and fail the whole reschedule. Which it did, for every reschedule.
+
+    Re-pointing deliberately resets the delivery state as well as the time. A
+    reminder that already went out for the old time has to go out again for the
+    new one, and it has to look un-sent to the scheduler for that to happen.
     """
     if not business.whatsapp_enabled:
         return None
@@ -353,19 +364,44 @@ async def queue_message(
         "business_phone": business.contact_phone or business.phone_number,
     }
 
-    message = WhatsAppMessage(
-        business_id=business.id,
-        appointment_id=appointment.id if appointment else None,
-        to_phone=customer.phone,
-        kind=kind,
-        status=MessageStatus.PENDING,
-        template_name=spec.name,
-        language_code=spec.language_code,
-        payload=variables,
-        rendered_preview=spec.render(variables),
-        scheduled_for=scheduled_for,
-    )
-    db.add(message)
+    message = None
+    if appointment is not None:
+        message = (
+            await db.execute(
+                select(WhatsAppMessage).where(
+                    WhatsAppMessage.appointment_id == appointment.id,
+                    WhatsAppMessage.kind == kind,
+                )
+            )
+        ).scalar_one_or_none()
+
+    if message is None:
+        # Messages with no appointment (owner alerts, daily summaries, waitlist
+        # notices) fall here every time: the constraint does not apply to them
+        # because NULL appointment ids are distinct, and each is a new event.
+        message = WhatsAppMessage(
+            business_id=business.id,
+            appointment_id=appointment.id if appointment else None,
+            to_phone=customer.phone,
+            kind=kind,
+        )
+        db.add(message)
+
+    message.to_phone = customer.phone
+    message.status = MessageStatus.PENDING
+    message.template_name = spec.name
+    message.language_code = spec.language_code
+    message.payload = variables
+    message.rendered_preview = spec.render(variables)
+    message.scheduled_for = scheduled_for
+    # A previous attempt's outcome must not be inherited: three failed attempts
+    # against the old time would otherwise leave the new message dead on arrival.
+    message.attempt_count = 0
+    message.last_error = ""
+    message.sent_at = None
+    message.delivered_at = None
+    message.wa_message_id = ""
+
     await db.flush()
     return message
 
