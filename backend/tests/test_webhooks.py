@@ -83,3 +83,160 @@ async def test_rate_limit_blocks_repeated_login_attempts(client):
             assert "Retry-After" in r.headers
             break
     assert seen_429, "login should be rate limited"
+
+
+# --------------------------------------------------------------------------- #
+# Tool calls and inbound replies, past the signature check
+# --------------------------------------------------------------------------- #
+def _vapi_tool_call(name: str, arguments: dict, *, dialed: str, caller: str) -> dict:
+    """A tool-call payload in VAPI's shape.
+
+    The business is deliberately identified by the dialed number rather than an
+    argument: the model relays whatever the caller says, so a business id in the
+    arguments would be a prompt-injection path straight through tenant isolation.
+    """
+    return {
+        "message": {
+            "type": "tool-calls",
+            "call": {
+                "id": "call-1",
+                "phoneNumber": {"number": dialed},
+                "customer": {"number": caller},
+            },
+            "toolCallList": [
+                {"id": "tc-1", "function": {"name": name, "arguments": arguments}}
+            ],
+        }
+    }
+
+
+async def test_join_waitlist_records_the_caller(client, tenants, session_factory, monkeypatch):
+    """Nothing was free, so the caller goes on the list instead of being lost.
+
+    This went through the signature check and then failed on a function name that
+    did not exist, so the caller heard "something went wrong" and the whole
+    never-end-empty-handed path was dead. Driven through the real endpoint,
+    because that is what a name error survives.
+    """
+    from datetime import date, timedelta
+
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import Customer, WaitlistEntry
+
+    monkeypatch.setenv("VAPI_WEBHOOK_SECRET", "tool-secret")
+    get_settings.cache_clear()
+
+    wanted = date.today() + timedelta(days=3)
+    r = await client.post(
+        "/webhooks/vapi/tool",
+        json=_vapi_tool_call(
+            "join_waitlist",
+            {
+                "customer_name": "Anita Rao",
+                "date_from": wanted.isoformat(),
+                "date_to": (wanted + timedelta(days=2)).isoformat(),
+                "reason": "follow-up",
+            },
+            dialed="+911100000001",
+            caller="+919876511111",
+        ),
+        headers={"X-Vapi-Secret": "tool-secret"},
+    )
+
+    assert r.status_code == 200, r.text
+    result = r.json()["results"][0]["result"]
+    assert result["status"] == "success", result
+
+    async with session_factory() as db:
+        entries = (await db.execute(select(WaitlistEntry))).scalars().all()
+        customers = (await db.execute(select(Customer))).scalars().all()
+
+    assert len(entries) == 1
+    assert entries[0].business_id == tenants["alpha_id"]
+    assert [c.phone for c in customers] == ["+919876511111"]
+
+
+async def test_whatsapp_cancel_works_for_a_customer_with_two_appointments(
+    client, tenants, session_factory, monkeypatch
+):
+    """A returning customer could not cancel by replying CANCEL.
+
+    Their business was looked up by joining through their appointments, and two
+    appointments returned the same business twice, which the ambiguity guard read
+    as two different businesses and refused to act on. The guard itself is right —
+    cancelling the wrong business's appointment is worse than doing nothing — it
+    was only counting rows instead of businesses.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import select
+
+    from app.config import get_settings
+    from app.db.models import Appointment, AppointmentStatus, Customer
+
+    monkeypatch.setenv("WHATSAPP_APP_SECRET", "cancel-secret")
+    get_settings.cache_clear()
+
+    now = datetime.now(timezone.utc)
+    async with session_factory() as db:
+        customer = Customer(
+            business_id=tenants["alpha_id"], phone="+919876522222", name="Repeat Caller"
+        )
+        db.add(customer)
+        await db.flush()
+        for days in (2, 9):
+            db.add(
+                Appointment(
+                    business_id=tenants["alpha_id"],
+                    customer_id=customer.id,
+                    starts_at=now + timedelta(days=days),
+                    ends_at=now + timedelta(days=days, minutes=15),
+                    status=AppointmentStatus.SCHEDULED,
+                )
+            )
+        await db.commit()
+
+    body = {
+        "entry": [
+            {
+                "changes": [
+                    {
+                        "value": {
+                            "metadata": {},
+                            "messages": [
+                                {
+                                    "type": "text",
+                                    "from": "919876522222",
+                                    "text": {"body": "CANCEL"},
+                                }
+                            ],
+                        }
+                    }
+                ]
+            }
+        ]
+    }
+    raw = json.dumps(body).encode()
+    signature = hmac.new(b"cancel-secret", raw, hashlib.sha256).hexdigest()
+
+    r = await client.post(
+        "/webhooks/whatsapp",
+        content=raw,
+        headers={
+            "Content-Type": "application/json",
+            "X-Hub-Signature-256": f"sha256={signature}",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+    async with session_factory() as db:
+        statuses = (
+            await db.execute(
+                select(Appointment.status).order_by(Appointment.starts_at.asc())
+            )
+        ).scalars().all()
+
+    # The next one is cancelled; the later one is left alone.
+    assert statuses == [AppointmentStatus.CANCELLED, AppointmentStatus.SCHEDULED]
