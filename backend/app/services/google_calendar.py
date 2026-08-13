@@ -504,7 +504,7 @@ async def find_available_slots(
     limit: int = 20,
 ) -> list[Slot]:
     """Bookable openings, honouring working hours and the live calendar."""
-    calendar_id = _calendar_id_for(business, staff_member)
+    calendar_id = await _calendar_id_for(db, business, staff_member)
     duration = duration_minutes or (
         staff_member.consultation_duration_minutes if staff_member else business.slot_duration_minutes
     )
@@ -563,15 +563,37 @@ async def is_slot_free(
     long enough for a walk-in to take the slot, so the check is repeated at
     write time rather than trusted from the earlier availability query.
     """
-    calendar_id = _calendar_id_for(business, staff_member)
+    calendar_id = await _calendar_id_for(db, business, staff_member)
     busy = await get_busy_windows(db, business.id, calendar_id, start, end)
     return not _overlaps(start, end, busy)
 
 
-def _calendar_id_for(business: Business, staff_member: StaffMember | None) -> str:
-    """Per-staff_member calendar when set, otherwise the business's connected calendar."""
+async def _calendar_id_for(
+    db: AsyncSession, business: Business, staff_member: StaffMember | None
+) -> str:
+    """Which calendar this booking reads and writes.
+
+    Per-staff_member calendar when set, otherwise the calendar the business
+    connected, otherwise "primary".
+
+    The middle case is the one that matters. In service-account mode the business
+    shares a specific calendar with us and its address is stored on the
+    credential; "primary" there means the *service account's* own calendar, which
+    is empty and which nobody at the business can see. Returning it unconditionally
+    meant the connection verified fine at setup and then every call read an
+    always-free calendar and wrote bookings into the void. In OAuth mode the
+    stored value is "primary" already, so that path is unchanged.
+    """
     if staff_member and staff_member.google_calendar_id:
         return staff_member.google_calendar_id
+
+    cred = (
+        await db.execute(
+            select(CalendarCredential).where(CalendarCredential.business_id == business.id)
+        )
+    ).scalar_one_or_none()
+    if cred and cred.calendar_id:
+        return cred.calendar_id
     return "primary"
 
 
@@ -630,7 +652,7 @@ async def create_event(
     staff_member: StaffMember | None = None,
 ) -> tuple[str, str]:
     """Create the calendar event. Returns (event_id, calendar_id)."""
-    calendar_id = _calendar_id_for(business, staff_member)
+    calendar_id = await _calendar_id_for(db, business, staff_member)
     body = _event_body(
         business=business,
         customer_name=customer_name,
