@@ -10,8 +10,22 @@ to the code.
 """
 
 import asyncio
+import os
 from datetime import time
 from typing import AsyncIterator
+
+# Before any app module is imported, because `app.config` reads the environment
+# at import time and `app.db.session` builds its engine from it.
+#
+# Both of these are generated on the fly when unset (an ephemeral JWT key, and a
+# Fernet key derived from it), which is right for running the app locally and
+# wrong for a test: several tests call `get_settings.cache_clear()` to pick up a
+# monkeypatched variable, and that rotates the signing key underneath a token the
+# same test already obtained. The symptom is a 401 on an unrelated request,
+# nowhere near the line that caused it. Pinning them also keeps Fernet stable, so
+# a value encrypted before a cache clear is still readable after one.
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-" + "x" * 40)
+os.environ.setdefault("ENCRYPTION_KEY", "Ck9NDBTG2vLBOhWv0EBv5UMB6iSFqNRSzMkkybNBaXg=")
 
 import pytest
 import pytest_asyncio
@@ -27,6 +41,28 @@ def event_loop():
     loop = asyncio.new_event_loop()
     yield loop
     loop.close()
+
+
+@pytest.fixture(autouse=True)
+def _reset_process_globals():
+    """Clear the caches that outlive a test.
+
+    Each test gets its own database, but two caches are module-level and do not:
+    the platform-settings cache (60s TTL) and the settings `lru_cache`. A test
+    that writes a WhatsApp credential therefore leaked it into the next test,
+    which then verified Meta signatures against a value it never set. That failure
+    only appeared when the two files ran in the same session and in that order,
+    which is the worst kind of red suite to debug.
+    """
+    from app.config import get_settings
+    from app.services import platform_config
+
+    platform_config.clear_cache()
+    yield
+    platform_config.clear_cache()
+    # monkeypatch undoes `setenv`, but the Settings object built from it stays
+    # cached, so the next test would read the previous test's environment.
+    get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture
