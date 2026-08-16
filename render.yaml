@@ -3,7 +3,7 @@
 # Free tier caveat, handled deliberately below: a free web service sleeps after
 # 15 minutes of inactivity and takes 30-60 seconds to wake. That is fatal for a
 # live phone call, because VAPI's tool webhook would time out mid-conversation.
-# A keep-alive ping every 10 minutes prevents it (see DEPLOY.md).
+# A keep-alive ping every 10 minutes prevents it.
 services:
   - type: web
     name: clinic-receptionist-api

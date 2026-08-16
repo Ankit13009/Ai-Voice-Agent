@@ -202,8 +202,7 @@ connection works and which account it points at.
 read authenticated responses.
 
 **Rate limiting.** Sliding window on login, refresh, password change, and
-onboarding. In-process, which is a real limitation: a multi-node deploy
-multiplies the effective limit by the node count and should move this to Redis.
+onboarding.
 
 **Other.** Login is constant-time across "no such user" and "wrong password", so
 it cannot be used to enumerate accounts. Pagination is capped at 100 per page.
@@ -387,21 +386,3 @@ Override any preset value inline (`labels`, `agent_rules`, `intake_fields`,
 Anything onboarding could not finish automatically comes back in `next_steps` as
 a checklist, rather than failing the whole business because one third party was
 down.
-
----
-
-## Known limitations
-
-- **Migrations.** `init_db()` only creates missing tables; it never alters an
-  existing one. Alembic is installed and must be adopted before the first schema
-  change against production data.
-- **Rate limiting is per-process.** Correct on one node, weaker on several.
-- **The reminder scheduler runs in-process.** It claims rows with
-  `FOR UPDATE SKIP LOCKED` so multiple API instances will not double-send, but
-  SQLite (local development only) has no such locking.
-- **Call outcome is inferred** from what changed in the database during the
-  call, not self-reported by the model. A caller who books from a number
-  different to the one they are calling from may be classified as an enquiry.
-- **WhatsApp templates are shared across trades.** They say "appointment",
-  which reads fine for every preset, but a trade wanting its own wording needs
-  its own Meta-approved templates.
