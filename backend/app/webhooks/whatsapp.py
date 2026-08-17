@@ -190,6 +190,12 @@ async def _resolve_business_for_customer(db, business_phone_id: str, customer_ph
     platform number, fall back to the customer's most recent appointment, and
     refuse to guess if that is ambiguous: cancelling the wrong business's
     appointment is far worse than doing nothing.
+
+    `distinct` matters more than it looks. Joining through appointments returns one
+    row per appointment, so a returning customer with two bookings at a single
+    business produced two identical rows, which the ambiguity check below counted
+    as two businesses and refused to act on. The effect was that the more loyal the
+    customer, the less able they were to cancel.
     """
     if business_phone_id:
         business = (
@@ -200,20 +206,24 @@ async def _resolve_business_for_customer(db, business_phone_id: str, customer_ph
         if business:
             return business
 
-    rows = (
+    # Distinct business ids rather than whole rows: `SELECT DISTINCT` cannot be
+    # ordered by a column it does not select, and the ordering was only ever there
+    # to pick a "most recent" business, which is exactly the guess this refuses to
+    # make when there is more than one.
+    business_ids = (
         await db.execute(
-            select(Business)
+            select(Business.id)
             .join(Customer, Customer.business_id == Business.id)
             .join(Appointment, Appointment.customer_id == Customer.id)
             .where(Customer.phone == customer_phone)
-            .order_by(Appointment.starts_at.desc())
+            .distinct()
             .limit(2)
         )
     ).scalars().all()
 
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
+    if len(business_ids) == 1:
+        return await db.get(Business, business_ids[0])
+    if len(business_ids) > 1:
         logger.warning(
             "Ambiguous inbound WhatsApp cancel from %s: matches multiple businesses.", customer_phone
         )

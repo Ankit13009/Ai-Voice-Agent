@@ -297,8 +297,6 @@ async def reschedule_appointment(
     if not await gcal.is_slot_free(db, business, starts_at, ends_at, staff_member):
         raise SlotUnavailableError()
 
-    await gcal.update_event_time(db, business, appointment, start=starts_at, end=ends_at)
-
     previous_start = appointment.starts_at
     appointment.starts_at = starts_at
     appointment.ends_at = ends_at
@@ -309,7 +307,10 @@ async def reschedule_appointment(
     await db.flush()
 
     # The queued reminders point at the old time, so drop them and queue fresh
-    # ones for the new time.
+    # ones for the new time. `cancel_pending_messages` still runs first: a kind
+    # that is not re-queued (a reminder switched off, or one now too close to the
+    # appointment to be worth sending) must stay cancelled rather than stay live
+    # against the old time.
     await whatsapp.cancel_pending_messages(db, appointment.id)
 
     customer = (
@@ -318,6 +319,15 @@ async def reschedule_appointment(
     await _queue_appointment_messages(
         db, business, customer, appointment, confirmation_kind=MessageKind.RESCHEDULE
     )
+
+    # Google last, unlike `book_appointment`. Moving the event is the one step here
+    # that cannot be rolled back, so it goes after every step that can: a calendar
+    # failure now aborts a transaction that promised the caller nothing, and a
+    # database failure can no longer leave the event moved while our record of it
+    # rolls back. That divergence is worse than a failed reschedule, because
+    # nothing reports it — the calendar the business reads and the dashboard it
+    # trusts simply disagree.
+    await gcal.update_event_time(db, business, appointment, start=starts_at, end=ends_at)
 
     logger.info(
         "Rescheduled appointment %s from %s to %s", appointment.id, previous_start, starts_at

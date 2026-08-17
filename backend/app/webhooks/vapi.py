@@ -455,7 +455,7 @@ async def _handle_join_waitlist(db, business: Business, args: dict, caller: str)
     except ValueError:
         return _tool_result("error", message="I did not catch those dates correctly.")
 
-    customer = await appointment_service.get_or_create_customer(
+    customer = await appointment_service.get_or_create_patient(
         db,
         business_id=business.id,
         phone=phone,
