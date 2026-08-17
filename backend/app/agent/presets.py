@@ -108,11 +108,14 @@ PHONE = IntakeField(
     "tool tells you the number is missing, or if they want to be called back on "
     "a different number.",
 )
+# Optional on purpose. The business likes knowing why someone is coming, but a
+# caller who will not say should still get their appointment: refusing to book
+# over a missing field loses a customer to keep a record tidy.
 REASON = IntakeField(
     "service_reason",
     "Reason for the visit",
-    True,
-    "A short phrase is enough. Do not interrogate them for detail.",
+    False,
+    "Ask once, briefly. Anything they say is enough, including nothing.",
 )
 ADDRESS = IntakeField(
     "address", "Service address", True, "Get the full address, or at least the area."

@@ -72,12 +72,29 @@ def _staff_block(business: Business, staff: list[StaffMember]) -> str:
             f"{business.label('staff_plural').lower()} to choose from, so never ask "
             f"which {business.label('staff_singular').lower()} they want."
         )
-    return "\n".join(
-        f"  - {member.name}"
-        + (f", {member.specialization}" if member.specialization else "")
-        + f" (id: {member.id}, {member.consultation_duration_minutes} min per booking)"
-        for member in active
-    )
+    lines = []
+    for member in active:
+        # Their own hours, when they differ from the business's. A caller asking
+        # "doctor kab tak baithte hain?" is asking a question with a real answer
+        # that was sitting in the database and never reached the agent, so it
+        # deflected to booking instead of answering.
+        hours = ""
+        if member.opens_at and member.closes_at:
+            hours = (
+                f", {member.opens_at.strftime('%-I:%M %p')} to "
+                f"{member.closes_at.strftime('%-I:%M %p')}"
+            )
+        if member.working_days:
+            days = ", ".join(DAY_NAMES.get(d, str(d)) for d in sorted(member.working_days))
+            hours += f" on {days}"
+
+        lines.append(
+            f"  - {member.name}"
+            + (f", {member.specialization}" if member.specialization else "")
+            + hours
+            + f" (id: {member.id}, {member.consultation_duration_minutes} min per booking)"
+        )
+    return "\n".join(lines)
 
 
 def _intake_block(business: Business, staff: list[StaffMember] | None = None) -> str:
@@ -202,6 +219,29 @@ caller patience.
 - Say numbers, dates and times as a person would say them aloud.
 - Never claim to be human. If asked directly, say so briefly and carry on.
 
+## You work here, and only here
+You are {business.business_descriptor}. If someone asks for something this
+business does not do, say plainly what this business is and offer what you can
+actually help with. Do not play along, do not take the booking anyway, and do
+not pretend to check.
+
+Someone who has misdialled, or wants a trade this is not, should hear what
+{business.name} actually is and be let go politely. Booking them anyway wastes
+their time and fills the diary with people who will not turn up.
+
+## Answer the question they asked
+When a caller asks something you have the answer to in "Business facts",
+including a {staff_singular}'s hours, opening times or the address, ANSWER IT,
+in one sentence, before anything else. Then continue.
+
+"{staff_singular} kab tak baithte hain?" or "aap kitne baje tak khule ho?" are
+real questions with real answers above. Replying "aapko appointment chahiye?"
+instead is the most machine-like thing you can do.
+
+If you genuinely do not have the answer, say so in one sentence and offer to
+have someone call back. Never guess, and never substitute a booking prompt for
+an answer.
+
 ## Who is calling
 Call `lookup_caller` once, right after your greeting. If it returns a name, use
 it and never ask who they are: asking a returning caller is the clearest sign
@@ -222,6 +262,10 @@ Three exchanges: one question, one offer of times, one confirmation.
    question, not one question each. Whatever they answer is enough. If it has no
    detail ("appointment", "milna hai"), accept it and move on: it is a booking,
    not a form.
+   Ask for a reason once, briefly, and never again. It is useful for the
+   business, not required to book. "Bas appointment chahiye" is a complete
+   answer, and pressing for a better one loses you a customer to keep a field
+   tidy.
 2. Call `check_availability` and read back THREE times in one sentence. Offering
    one time means anyone who cannot make it costs you a whole extra exchange.
    "कल नौ बजे, सवा नौ, या साढ़े नौ, कौन सा ठीक रहेगा?"

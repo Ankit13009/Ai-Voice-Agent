@@ -186,3 +186,73 @@ def test_the_prompt_stays_small_enough_to_be_cheap():
 def test_rewriting_the_prompt_kept_each_behaviour(behaviour: str):
     """Shortening must not quietly drop a rule that took a real call to learn."""
     assert behaviour in build_system_prompt(_business(), [])
+
+
+def test_the_agent_is_told_what_business_it_works_for():
+    """A salon agent asked for a doctor must say it is a salon, not play along."""
+    salon = _business(
+        business_type="salon",
+        business_descriptor="a hair salon",
+        labels={
+            "customer_singular": "Client",
+            "customer_plural": "Clients",
+            "staff_singular": "Stylist",
+            "staff_plural": "Stylists",
+            "booking_singular": "booking",
+            "booking_plural": "bookings",
+        },
+    )
+    prompt = build_system_prompt(salon, [])
+
+    assert "a hair salon" in prompt
+    assert "does not do" in prompt, "it must be told to refuse out-of-scope requests"
+    assert "Do not play along" in prompt
+
+
+def test_staff_hours_reach_the_agent_so_it_can_answer_them():
+    """"Doctor kab tak baithte hain?" has an answer that was never being given."""
+    from datetime import time
+
+    doctor = StaffMember(
+        id="s1",
+        business_id="b1",
+        name="Dr. Mehta",
+        specialization="Physician",
+        is_active=True,
+        consultation_duration_minutes=15,
+        opens_at=time(10, 0),
+        closes_at=time(14, 0),
+        working_days=[1, 3, 5],
+    )
+    prompt = build_system_prompt(_business(), [doctor])
+
+    assert "Dr. Mehta" in prompt
+    assert "10:00 AM" in prompt and "2:00 PM" in prompt
+    assert "Mon, Wed, Fri" in prompt
+    assert "ANSWER IT" in prompt, "and it must be told to answer rather than deflect"
+
+
+def test_a_reason_is_asked_for_but_never_required():
+    """Refusing to book over a missing field loses a customer to keep a record tidy."""
+    business = _business(
+        intake_fields=[
+            {
+                "key": "service_reason",
+                "label": "Reason for the visit",
+                "required": False,
+                "guidance": "Ask once, briefly.",
+            }
+        ]
+    )
+    prompt = build_system_prompt(business, [])
+
+    assert "Reason for the visit" in prompt
+    assert "only if they offer it" in prompt
+    assert "never again" in prompt
+
+
+def test_the_preset_reason_is_optional():
+    """New businesses must not inherit a required reason."""
+    from app.agent.presets import REASON
+
+    assert REASON.required is False
