@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { callApi } from "@/lib/api/endpoints";
 import { useApiList, useApiQuery } from "@/lib/useApi";
@@ -229,14 +229,51 @@ function CallDetailModal({
               <h3 className="text-xs font-semibold uppercase tracking-wide text-ink-subtle mb-1.5">
                 Recording
               </h3>
-              <audio controls src={call.recording_url} className="w-full">
-                Your browser cannot play this recording.
-              </audio>
+              <CallRecording callId={call.id} />
             </section>
           )}
         </div>
       )}
     </Modal>
+  );
+}
+
+/**
+ * The recording, fetched when someone actually opens the call.
+ *
+ * The URL stored on the call is VAPI's private object: it requires
+ * authorization and returns 400 to a browser, so the player sat there looking
+ * broken. The playable form is presigned and expires within the hour, which is
+ * why it cannot be stored and is asked for on open instead.
+ */
+function CallRecording({ callId }: { callId: string }) {
+  const [url, setUrl] = useState("");
+  const [problem, setProblem] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    callApi
+      .recording(callId)
+      .then((result) => {
+        if (cancelled) return;
+        if (result.url) setUrl(result.url);
+        else setProblem(result.reason || "No recording is available.");
+      })
+      .catch(() => {
+        if (!cancelled) setProblem("The recording could not be loaded.");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [callId]);
+
+  if (problem) return <p className="text-sm text-ink-subtle">{problem}</p>;
+  if (!url) return <p className="text-sm text-ink-subtle">Loading the recording…</p>;
+
+  return (
+    <audio controls src={url} className="w-full">
+      Your browser cannot play this recording.
+    </audio>
   );
 }
 

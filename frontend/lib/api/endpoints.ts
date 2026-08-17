@@ -146,6 +146,16 @@ export const callApi = {
     api.list<Call>(`${V1}/calls`, { ...query }, signal),
   get: (id: string, signal?: AbortSignal) =>
     api.get<CallDetail>(`${V1}/calls/${id}`, undefined, signal),
+
+  // The recording URL stored on the call is VAPI's private object and 400s in
+  // a browser. A playable one is presigned and short-lived, so it is fetched
+  // when someone actually opens the call rather than stored.
+  recording: (callId: string, signal?: AbortSignal) =>
+    api.get<{ url: string; reason?: string; expires_at?: string }>(
+      `${V1}/calls/${callId}/recording`,
+      undefined,
+      signal,
+    ),
 };
 
 export const customerApi = {

@@ -256,3 +256,16 @@ def test_the_preset_reason_is_optional():
     from app.agent.presets import REASON
 
     assert REASON.required is False
+
+
+def test_a_name_from_lookup_caller_counts_as_already_collected():
+    """Observed on a real call: lookup_caller returned "निशांत" and the agent
+    then asked "आपका नाम क्या है?". The rule not to ask was in one section and
+    the instruction to collect a name in another, and the instruction won."""
+    business = _business(
+        intake_fields=[
+            {"key": "customer_name", "label": "Full name", "required": True, "guidance": ""}
+        ]
+    )
+    prompt = build_system_prompt(business, [])
+    assert "counts as\n   already said" in prompt or "counts as already said" in prompt

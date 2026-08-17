@@ -114,3 +114,45 @@ async def get_call(
             "appointment_id": appointment_id,
         }
     )
+
+
+@router.get("/{call_id}/recording", summary="A playable link to this call's recording")
+async def call_recording(
+    call_id: str,
+    business_id: ActiveBusiness,
+    db: DbSession,
+    _user: CurrentUserDep,
+) -> dict:
+    """Fetch a fresh, playable URL for the recording.
+
+    The URL stored on the call is VAPI's private R2 object, which requires
+    authorization and returns 400 to a browser forever. The playable form is a
+    presigned URL that VAPI mints on request and expires within the hour, so it
+    cannot be stored: by the time anyone opened the call it would be dead.
+
+    Fetched through us rather than handing the dashboard a VAPI key, and scoped
+    to the caller's own business so a recording of someone else's patient cannot
+    be pulled by guessing an id.
+    """
+    from app.services import vapi
+
+    call = await scoped_get(db, Call, call_id, business_id, resource_name="Call")
+
+    if not call.vapi_call_id:
+        return ok({"url": "", "reason": "This call has no recording."})
+
+    try:
+        detail = await vapi._request("GET", f"/call/{call.vapi_call_id}")
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not fetch a recording URL for call %s", call_id, exc_info=True)
+        return ok({"url": "", "reason": "The recording could not be fetched just now."})
+
+    artifact = detail.get("artifact") or {}
+    # Mono is the caller and agent mixed together, which is what someone
+    # reviewing a call wants; stereo splits them onto separate channels.
+    url = artifact.get("presignedMonoUrl") or artifact.get("presignedStereoUrl") or ""
+
+    if not url:
+        return ok({"url": "", "reason": "No recording was kept for this call."})
+
+    return ok({"url": url, "expires_at": artifact.get("presignedUrlsExpiresAt", "")})
