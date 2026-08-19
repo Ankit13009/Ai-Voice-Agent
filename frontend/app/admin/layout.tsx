@@ -89,6 +89,12 @@ export default function AdminLayout({ children }: { children: ReactNode }) {
             <span className="text-xs text-ink-subtle truncate hidden sm:block">
               {user.email}
             </span>
+            <Link
+              href="/change-password"
+              className="text-sm text-ink-muted hover:text-ink transition-colors"
+            >
+              Password
+            </Link>
             <Button variant="ghost" size="sm" onClick={logout}>
               Sign out
             </Button>

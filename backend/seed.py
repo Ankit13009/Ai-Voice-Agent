@@ -8,6 +8,16 @@ Usage:
 The `--demo` businesses are deliberately two *different* trades (a clinic and a
 salon) running on the same code, seeded from their presets. That is the whole
 point of the platform, and it is worth being able to see it side by side.
+
+Everything in the demo data is invented. The businesses, people, numbers and
+call transcripts are fictional and exist to fill a local dashboard so it can be
+looked at. None of it came from a real caller, and this repository is public, so
+nothing real should ever be added to it.
+
+`--demo` refuses to run against a production database or one that already has
+businesses in it. Without that, one command run against the wrong DATABASE_URL
+puts invented clinics and invented patients into a database a paying client
+reads.
 """
 
 import argparse
@@ -207,17 +217,23 @@ async def add_activity(db, business: Business, samples: list[dict]) -> None:
 
 
 async def create_demo_data(db) -> None:
+    """Fill a local dashboard with something to look at.
+
+    Every name, number, address and transcript below is invented. Numbers use an
+    obviously-unreal 99999 prefix rather than a plausible one, because this file
+    is in a public repository and a realistic number belongs to somebody.
+    """
     clinic = await create_business(
         db,
         business_type="clinic",
         name="Sunrise Multispeciality Clinic",
         slug="sunrise-clinic",
-        phone_number="+911140001234",
+        phone_number="+919999900001",
         owner_email="owner@sunriseclinic.in",
         owner_name="Dr. Meera Sharma",
         address="21 Nehru Place, New Delhi",
         city="New Delhi",
-        contact_phone="+919810012345",
+        contact_phone="+919999900002",
         staff=[
             ("Dr. Meera Sharma", "General Physician", 15),
             ("Dr. Rohit Verma", "Dermatologist", 20),
@@ -232,7 +248,7 @@ async def create_demo_data(db) -> None:
             [
                 {
                     "customer_name": "Anjali Gupta",
-                    "phone": "+919876543210",
+                    "phone": "+919999900010",
                     "duration": 95,
                     "reason": "Persistent cough",
                     "summary": "Patient booked a follow-up for a persistent cough.",
@@ -252,12 +268,12 @@ async def create_demo_data(db) -> None:
         business_type="salon",
         name="Glow Studio",
         slug="glow-studio",
-        phone_number="+911140005678",
+        phone_number="+919999900003",
         owner_email="owner@glowstudio.in",
         owner_name="Priya Nair",
         address="14 Linking Road, Bandra West, Mumbai",
         city="Mumbai",
-        contact_phone="+919820011223",
+        contact_phone="+919999900004",
         staff=[
             ("Priya Nair", "Senior Stylist", 45),
             ("Kabir Shah", "Colour Specialist", 90),
@@ -272,7 +288,7 @@ async def create_demo_data(db) -> None:
             [
                 {
                     "customer_name": "Sneha Iyer",
-                    "phone": "+919833344556",
+                    "phone": "+919999900011",
                     "duration": 78,
                     "reason": "Hair colour touch-up",
                     "summary": "Client booked a colour touch-up with Kabir.",
@@ -293,10 +309,38 @@ async def create_demo_data(db) -> None:
     print("  Salon  → 'Clients'  / 'Stylists', pricing rules, no escalation")
 
 
+async def _refuse_demo_if_unsafe(db) -> None:
+    """Demo data belongs in a local database and nowhere else.
+
+    Two separate checks, because either alone is easy to slip past: APP_ENV
+    catches the deployed environment, and an existing business catches a staging
+    or local database that someone has since pointed at real work.
+    """
+    from app.config import get_settings
+
+    settings = get_settings()
+    if settings.is_production:
+        raise SystemExit(
+            "Refusing to seed demo data: APP_ENV is production.\n"
+            "The demo businesses, people and transcripts are invented, and they "
+            "must never appear in a database a client reads."
+        )
+
+    existing = (await db.execute(select(Business))).scalars().first()
+    if existing is not None:
+        raise SystemExit(
+            f"Refusing to seed demo data: this database already has businesses "
+            f"(found {existing.name!r}).\n"
+            "Invented clinics alongside real ones is worse than either alone."
+        )
+
+
 async def main() -> None:
     args = parse_args()
     await init_db()
     async with SessionLocal() as db:
+        if args.demo:
+            await _refuse_demo_if_unsafe(db)
         await create_superadmin(db, args)
         if args.demo:
             await create_demo_data(db)

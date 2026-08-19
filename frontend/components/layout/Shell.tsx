@@ -214,6 +214,16 @@ function SidebarFooter({
         >
           {theme === "dark" ? "Light" : "Dark"}
         </Button>
+        {/* Changing your own password had no route at all: the only screen was
+            the forced one, which appears solely when an admin has just reset
+            you. Anyone wanting to rotate a credential had to ask an admin to
+            reset it for them. */}
+        <Link
+          href="/change-password"
+          className="flex-1 text-center text-sm text-ink-muted hover:text-ink transition-colors py-1.5"
+        >
+          Password
+        </Link>
         <Button variant="ghost" size="sm" onClick={onLogout} className="flex-1">
           Sign out
         </Button>

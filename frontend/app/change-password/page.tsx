@@ -21,6 +21,10 @@ export default function ChangePasswordPage() {
   const router = useRouter();
   const toast = useToast();
   const { user, refreshUser } = useAuth();
+  // The same screen serves two cases: forced after an admin reset, and chosen
+  // voluntarily from the sidebar. Telling someone who came here on purpose that
+  // they "signed in with a one-time password" would be wrong.
+  const forced = Boolean(user?.must_change_password);
 
   const [current, setCurrent] = useState("");
   const [next, setNext] = useState("");
@@ -55,15 +59,19 @@ export default function ChangePasswordPage() {
   return (
     <main className="min-h-screen flex items-center justify-center p-6 bg-canvas">
       <div className="w-full max-w-sm">
-        <h1 className="text-2xl font-semibold text-ink">Set your password</h1>
+        <h1 className="text-2xl font-semibold text-ink">
+          {forced ? "Set your password" : "Change your password"}
+        </h1>
         <p className="text-sm text-ink-muted mt-1.5 mb-6">
-          You signed in with a one-time password. Choose your own before continuing.
+          {forced
+            ? "You signed in with a one-time password. Choose your own before continuing."
+            : "Choose a new password. You will stay signed in on this device."}
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4" noValidate>
           {formError && <Alert tone="danger">{formError}</Alert>}
 
-          <Field label="One-time password" required>
+          <Field label={forced ? "One-time password" : "Current password"} required>
             <Input
               type="password"
               value={current}
