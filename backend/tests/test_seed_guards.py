@@ -1,55 +1,54 @@
-"""Demo data must not be able to reach a real database.
+"""seed.py must stay a mechanism, not a data file.
 
-seed.py --demo creates invented clinics, invented patients and invented call
-transcripts. It had no guard at all, so one command run against the wrong
-DATABASE_URL would have put fictional patients into the database a paying client
-reads, next to their real ones.
+It once carried an invented clinic and salon with fabricated patients, phone
+numbers and call transcripts, in a public repository. That is gone. These tests
+exist so it does not come back by accident: no credentials, and no phone numbers
+that could belong to a real person.
 """
 
-import pytest
+import pathlib
+
+SEED = pathlib.Path(__file__).resolve().parents[1] / "seed.py"
 
 
-def test_the_seed_file_has_no_plausible_phone_numbers():
-    """This repository is public, and a realistic number belongs to somebody."""
-    import pathlib
+def test_no_phone_numbers_at_all():
+    """A realistic number in a public repository belongs to somebody."""
     import re
 
-    source = (pathlib.Path(__file__).resolve().parents[1] / "seed.py").read_text()
-    numbers = set(re.findall(r"\+91\d{10}", source))
-
-    plausible = [n for n in numbers if not n.startswith("+9199999")]
-    assert not plausible, (
-        f"seed.py contains numbers a real person could own: {plausible}. "
-        "Use an obviously-invented prefix."
-    )
+    numbers = re.findall(r"\+\d{10,15}", SEED.read_text())
+    assert not numbers, f"seed.py should hold no phone numbers, found: {numbers}"
 
 
-@pytest.mark.asyncio
-async def test_demo_refuses_when_the_database_already_has_a_business(
-    session_factory, tenants
-):
-    """Invented clinics alongside real ones is worse than either alone."""
-    import seed
-
-    async with session_factory() as db:
-        with pytest.raises(SystemExit) as raised:
-            await seed._refuse_demo_if_unsafe(db)
-
-    assert "already has businesses" in str(raised.value)
+def test_credentials_are_required_arguments_with_no_defaults():
+    """Nothing here may produce a predictable account."""
+    source = SEED.read_text()
+    assert 'parser.add_argument("--email", required=True)' in source
+    assert 'parser.add_argument("--password", required=True)' in source
+    assert "password=" not in source.replace("--password", "")
 
 
-@pytest.mark.asyncio
-async def test_demo_refuses_in_production(session_factory, monkeypatch):
-    """The guard that matters: APP_ENV catches the deployed environment."""
-    import seed
-    from app.config import get_settings
+def test_it_creates_no_businesses():
+    """Businesses come from the onboarding form, where a human names them.
 
-    monkeypatch.setenv("APP_ENV", "production")
-    get_settings.cache_clear()
+    Checks the code rather than the prose: the module docstring mentions the
+    removed demo data on purpose, so that a reader knows why it is not here.
+    """
+    import ast
 
-    async with session_factory() as db:
-        with pytest.raises(SystemExit) as raised:
-            await seed._refuse_demo_if_unsafe(db)
+    tree = ast.parse(SEED.read_text())
+    functions = {
+        node.name
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert "create_business" not in functions
+    assert "add_activity" not in functions
+    assert "create_demo_data" not in functions
 
-    assert "production" in str(raised.value)
-    get_settings.cache_clear()
+    # And no Business rows constructed anywhere in it.
+    constructed = {
+        node.func.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "Business" not in constructed, "seed.py must not create businesses"

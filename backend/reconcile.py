@@ -94,10 +94,20 @@ async def main(fix: bool) -> None:
         if assigned and assigned not in by_assistant:
             problems += 1
             print(f"  STRANDED {n.get('number'):36} points at an assistant no business owns")
-            if fix and by_assistant:
-                target = next(iter(by_assistant))
-                await vapi.attach_phone_number(n["id"], target)
-                print(f"           -> repointed at {target[:8]}")
+            # Deliberately not repaired. This previously repointed the number at
+            # `next(iter(by_assistant))`, an arbitrary business, which means calls
+            # for one client could start reaching another client's agent. A
+            # number is the one thing where guessing wrong is a cross-tenant
+            # leak, so it is reported for a human to point somewhere on purpose.
+            if fix:
+                owner = next(
+                    (b.name for a, b in by_assistant.items() if a == assigned), None
+                )
+                print(
+                    "           -> not repaired: attach it to the right business in "
+                    "the VAPI dashboard, or from that business's settings."
+                    + (f" (was {owner})" if owner else "")
+                )
 
     print()
     if problems == 0:
