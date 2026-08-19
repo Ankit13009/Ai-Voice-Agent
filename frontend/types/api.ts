@@ -68,7 +68,10 @@ export type ApiErrorCode =
   | "TOKEN_INVALID"
   | "FORBIDDEN"
   | "INSUFFICIENT_ROLE"
-  | "CLINIC_ACCESS_DENIED"
+  | "BUSINESS_ACCESS_DENIED"
+  // Authenticated, but holding a one-time password: the dashboard must send
+  // them to set a real one rather than show a permission error.
+  | "PASSWORD_CHANGE_REQUIRED"
   | "WEBHOOK_SIGNATURE_INVALID"
   | "NOT_FOUND"
   | "CONFLICT"

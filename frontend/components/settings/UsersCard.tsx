@@ -135,8 +135,8 @@ export function UsersCard() {
               {issued.email} &nbsp;&nbsp; {issued.password}
             </p>
             <p className="text-xs mt-1.5 opacity-80">
-              Give this to them now. It cannot be shown again, and they will be asked to
-              change it when they sign in.
+              Give this to them now. It cannot be shown again, and they must set their own
+              password before they can use the dashboard.
             </p>
             <Button
               size="sm"

@@ -269,3 +269,27 @@ def test_a_name_from_lookup_caller_counts_as_already_collected():
     )
     prompt = build_system_prompt(business, [])
     assert "counts as\n   already said" in prompt or "counts as already said" in prompt
+
+
+@pytest.mark.parametrize(
+    "language,expect_devanagari",
+    [("en", False), ("hi", True), ("hi-en", False)],
+)
+def test_spoken_messages_follow_the_business_language(language, expect_devanagari):
+    """Both are spoken aloud, so both were wrong for two of the three languages.
+
+    The transfer line was hardcoded Hinglish and the sign-off hardcoded English,
+    so an English-only law firm heard Hinglish as its call was handed over and a
+    Hindi-only clinic said goodbye in English.
+    """
+    import re
+
+    from app.agent.tools import _transfer_message
+    from app.services.vapi import _end_call_message
+
+    business = _business(primary_language=Language(language))
+    devanagari = re.compile(r"[ऀ-ॿ]")
+
+    for message in (_transfer_message(business), _end_call_message(business)):
+        assert message
+        assert bool(devanagari.search(message)) is expect_devanagari

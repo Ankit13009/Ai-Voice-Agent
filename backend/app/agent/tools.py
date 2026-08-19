@@ -213,6 +213,17 @@ ALL_TOOLS = [
 ]
 
 
+def _transfer_message(business: "Business") -> str:
+    """What the caller hears as the call is handed to a person."""
+    from app.db.models import Language
+
+    if business.primary_language == Language.ENGLISH:
+        return "Let me put you through to someone now, one moment."
+    if business.primary_language == Language.HINDI:
+        return "मैं आपको अभी किसी से जोड़ती हूँ, एक मिनट।"
+    return "Main aapko abhi connect kar rahi hoon, ek moment."
+
+
 def _fill_labels(value: Any, labels: dict[str, str]) -> Any:
     """Recursively substitute {customer_singular} / {staff_singular} in descriptions.
 
@@ -288,10 +299,12 @@ def build_vapi_tools(
                         {
                             "type": "number",
                             "number": destination,
-                            "message": (
-                                "Main aapko abhi reception se connect kar rahi hoon, "
-                                "ek moment."
-                            ),
+                            # Spoken to the caller as the transfer begins, so it
+                            # has to be in the language the business runs in. It
+                            # was hardcoded Hinglish, which an English-only law
+                            # firm or a Hindi-only clinic would both have heard
+                            # wrongly.
+                            "message": _transfer_message(business),
                         }
                     ],
                 }

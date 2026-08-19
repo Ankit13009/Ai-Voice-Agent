@@ -36,10 +36,17 @@ export default function LoginPage() {
 
   // Superadmins have no tenant, so every business-scoped page would 403.
   // Send them to the operator area instead.
-  const homeFor = (role: string) => (role === "superadmin" ? "/admin" : "/");
+  // A user still holding their one-time password can reach nothing else, so
+  // send them straight there rather than to a dashboard that will 403.
+  const homeFor = (user: { role: string; must_change_password?: boolean }) =>
+    user.must_change_password
+      ? "/change-password"
+      : user.role === "superadmin"
+        ? "/admin"
+        : "/";
 
   useEffect(() => {
-    if (!sessionLoading && user) router.replace(homeFor(user.role));
+    if (!sessionLoading && user) router.replace(homeFor(user));
   }, [sessionLoading, user, router]);
 
   async function handleSubmit(event: FormEvent) {
@@ -50,7 +57,7 @@ export default function LoginPage() {
 
     try {
       const signedIn = await login(email.trim(), password);
-      router.replace(homeFor(signedIn.role));
+      router.replace(homeFor(signedIn));
     } catch (error) {
       if (error instanceof ApiError) {
         // Field-level problems go inline; everything else becomes the banner.

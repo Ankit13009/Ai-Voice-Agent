@@ -141,6 +141,16 @@ async def test_a_staff_user_cannot_repoint_the_calendar(client, tenants, monkeyp
     temporary = created.json()["data"]["temporary_password"]
     staff_token = await login(client, "desk@alpha.in", temporary)
 
+    # Clear the one-time password first. Without this the staff user is blocked
+    # for needing a password change, and this test would pass on a 403 that has
+    # nothing to do with the role it means to check.
+    await client.post(
+        "/api/v1/auth/change-password",
+        json={"current_password": temporary, "new_password": "desk-password-1"},
+        headers=auth(staff_token),
+    )
+    staff_token = await login(client, "desk@alpha.in", "desk-password-1")
+
     r = await client.post(
         "/api/v1/integrations/google/service-account",
         json={"calendar_id": "attacker@gmail.com"},

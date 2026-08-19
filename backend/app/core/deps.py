@@ -26,6 +26,7 @@ from app.core.errors import (
     ForbiddenError,
     InsufficientRoleError,
     NotFoundError,
+    PasswordChangeRequiredError,
     UnauthenticatedError,
 )
 from app.core.security import decode_token
@@ -58,6 +59,15 @@ class CurrentUser:
     @property
     def is_owner(self) -> bool:
         return self.role in (UserRole.OWNER, UserRole.SUPERADMIN)
+
+
+# Everything a user holding a one-time password is still allowed to reach.
+PASSWORD_CHANGE_ALLOWED_PATHS = {
+    "/api/v1/auth/me",
+    "/api/v1/auth/change-password",
+    "/api/v1/auth/logout",
+    "/api/v1/auth/refresh",
+}
 
 
 async def get_current_user(
@@ -97,6 +107,17 @@ async def get_current_user(
             user.business_id,
         )
         raise UnauthenticatedError("Your session is no longer valid. Please sign in again.")
+
+    # A one-time password must be replaced before it can be used for anything
+    # else. Enforced here rather than in each endpoint so a route added later
+    # cannot forget, and allowlisted narrowly: the caller has to be able to see
+    # who they are, set the new password, and sign out.
+    #
+    # Without this the flag was decoration. A password read aloud over the phone
+    # kept working forever, which is exactly what a one-time password is meant
+    # to prevent, and the dashboard told operators otherwise.
+    if user.must_change_password and request.url.path not in PASSWORD_CHANGE_ALLOWED_PATHS:
+        raise PasswordChangeRequiredError()
 
     current = CurrentUser(
         id=user.id,

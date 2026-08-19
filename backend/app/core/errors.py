@@ -32,6 +32,11 @@ class ErrorCode(StrEnum):
 
     # --- 403 ---
     FORBIDDEN = "FORBIDDEN"
+    # The caller is authenticated but holds a one-time password and must set
+    # a real one before doing anything else. Distinct from FORBIDDEN so the
+    # dashboard can route to the change-password screen rather than showing a
+    # permission error the user cannot act on.
+    PASSWORD_CHANGE_REQUIRED = "PASSWORD_CHANGE_REQUIRED"
     INSUFFICIENT_ROLE = "INSUFFICIENT_ROLE"
     BUSINESS_ACCESS_DENIED = "BUSINESS_ACCESS_DENIED"
     WEBHOOK_SIGNATURE_INVALID = "WEBHOOK_SIGNATURE_INVALID"
@@ -246,4 +251,24 @@ class InternalError(AppError):
     code = ErrorCode.INTERNAL_ERROR
 
     def __init__(self, message: str = "Something went wrong on our end.", **kw: Any) -> None:
+        super().__init__(message, **kw)
+
+
+class PasswordChangeRequiredError(AppError):
+    """Issued a one-time password and has not replaced it yet.
+
+    Enforced rather than advisory: the flag was set on every created user and
+    every reset, shown in the dashboard, and never checked, so a password read
+    out over the phone kept working indefinitely. The UI told operators the user
+    "will be asked to change it", which was simply untrue.
+    """
+
+    status_code = 403
+    code = ErrorCode.PASSWORD_CHANGE_REQUIRED
+
+    def __init__(
+        self,
+        message: str = "Set a new password before you continue.",
+        **kw: Any,
+    ) -> None:
         super().__init__(message, **kw)

@@ -24,6 +24,13 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (loading) return;
+    // An admin can reset a password while this session is open. The server
+    // starts refusing everything at that point, so route rather than let
+    // every page fill with permission errors.
+    if (user?.must_change_password) {
+      router.replace("/change-password");
+      return;
+    }
     if (!user) {
       // A token in storage means a session is being established: the user object
       // simply has not propagated through context yet. Bouncing to /login here

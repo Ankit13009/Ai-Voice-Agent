@@ -74,6 +74,15 @@ def _assistant_name(business: Business) -> str:
     return business.slug[:MAX_ASSISTANT_NAME]
 
 
+def _end_call_message(business: Business) -> str:
+    """The sign-off, in the language the business actually runs in."""
+    if business.primary_language == Language.ENGLISH:
+        return "Thank you for calling. Take care."
+    if business.primary_language == Language.HINDI:
+        return "फ़ोन करने के लिए धन्यवाद। अपना ध्यान रखिए।"
+    return "Thank you, phone karne ke liye. Apna dhyan rakhiye."
+
+
 def build_assistant_payload(business: Business, staff_members: list[StaffMember]) -> dict[str, Any]:
     """The master template, rendered for one business."""
     settings = get_settings()
@@ -150,7 +159,9 @@ def build_assistant_payload(business: Business, staff_members: list[StaffMember]
         # eat most of it.
         "silenceTimeoutSeconds": 20,
         "maxDurationSeconds": 420,
-        "endCallMessage": "Thank you for calling. Take care.",
+        # Also spoken aloud, so also language-dependent. A Hindi-only business
+        # was signing off in English.
+        "endCallMessage": _end_call_message(business),
         "backgroundDenoisingEnabled": True,
         "recordingEnabled": True,
         "metadata": {"business_id": business.id, "clinic_slug": business.slug},
